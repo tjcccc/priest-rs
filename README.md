@@ -8,7 +8,7 @@ Rust 2021 · async/await (tokio) · Zero system dependencies
 
 ## Overview
 
-`priest` is a Rust crate that implements the priest protocol spec v2.0.0 natively — no Python server, no FFI. It is designed for Rust services, CLI tools, and any async Rust host that needs to talk to a local or remote AI provider.
+`priest` is a Rust crate that implements the priest protocol spec v2.2.0 natively — no Python server, no FFI. It is designed for Rust services, CLI tools, and any async Rust host that needs to talk to a local or remote AI provider.
 
 The core API is two methods on `PriestEngine`:
 
@@ -311,10 +311,10 @@ let engine = PriestEngine::new(loader)
 
 ## Spec
 
-`priest` targets priest protocol spec **v2.0.0**. The spec lives in the [`priest`](https://github.com/tjcccc/priest) repository under `spec/`. It defines the canonical context assembly algorithm, session schema, timestamp format, and error codes that all priest SDKs must implement identically.
+`priest` targets priest protocol spec **v2.2.0**. The spec lives in the [`priest`](https://github.com/tjcccc/priest) repository under `spec/`. It defines the canonical context assembly algorithm, session schema, timestamp format, and error codes that all priest SDKs must implement identically.
 
 ```rust
-priest::SPEC_VERSION  // "2.0.0"
+priest::SPEC_VERSION  // "2.2.0"
 ```
 
 ---
