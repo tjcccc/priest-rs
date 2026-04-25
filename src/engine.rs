@@ -14,7 +14,7 @@ use crate::schema::response::{ExecutionInfo, PriestErrorModel, PriestResponse, S
 use crate::session::model::Session;
 use crate::session::store::SessionStore;
 
-pub const SPEC_VERSION: &str = "2.0.0";
+pub const SPEC_VERSION: &str = "2.2.0";
 
 pub struct PriestEngine {
     adapters: HashMap<String, Box<dyn ProviderAdapter>>,

@@ -1,5 +1,17 @@
 # DEVLOG
 
+## 2026-04-25 — v2.2.0 — json_schema structured output
+
+Added `json_schema`, `json_schema_name`, and `json_schema_strict` fields to `OutputSpec` (serde defaults: `None`, `"response"`, `false`).
+
+- **OpenAI-compat:** `response_format:{type:"json_schema", json_schema:{name, schema, strict}}` in `build_payload`.
+- **Ollama (v0.5+):** `format:<schema_dict>` (schema cloned directly as `serde_json::Value`).
+- **Anthropic:** `build_payload` now accepts `output_spec`; schema description injected into system string for both `complete` and `stream`.
+- `json_schema` takes precedence over `provider_format` when both are set.
+- `SPEC_VERSION` → `"2.2.0"`
+
+---
+
 ## 2026-04-20 — v2.0.0 — Initial implementation
 
 First implementation of `priest-rs`, the Rust crate for the priest protocol.
