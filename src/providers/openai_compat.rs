@@ -62,7 +62,16 @@ fn build_payload(messages: &[Message], config: &PriestConfig, output_spec: &Outp
     let mut payload = json!({ "model": config.model, "messages": msgs });
     if stream { payload["stream"] = json!(true); }
     if let Some(max_t) = config.max_output_tokens { payload["max_tokens"] = json!(max_t); }
-    if output_spec.provider_format.as_deref() == Some("json") {
+    if let Some(ref schema) = output_spec.json_schema {
+        payload["response_format"] = json!({
+            "type": "json_schema",
+            "json_schema": {
+                "name":   output_spec.json_schema_name,
+                "schema": schema,
+                "strict": output_spec.json_schema_strict,
+            },
+        });
+    } else if output_spec.provider_format.as_deref() == Some("json") {
         payload["response_format"] = json!({"type": "json_object"});
     }
     for (k, v) in &config.provider_options {

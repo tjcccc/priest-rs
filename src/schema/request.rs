@@ -67,7 +67,23 @@ pub struct OutputSpec {
     pub provider_format: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt_format: Option<String>,
+    /// JSON Schema for structured output.
+    /// OpenAI-compat: maps to response_format={"type":"json_schema",...}.
+    /// Ollama (v0.5+): maps to format:<schema_dict>.
+    /// Anthropic: schema description injected into system message (no native support).
+    /// When set, takes precedence over provider_format for the schema-capable path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub json_schema: Option<Value>,
+    /// Schema name passed to OpenAI's json_schema.name field. Defaults to "response".
+    #[serde(default = "default_json_schema_name")]
+    pub json_schema_name: String,
+    /// Maps to OpenAI's json_schema.strict. Requires all properties in required and
+    /// additionalProperties:false. Most schemas won't satisfy this. Defaults to false.
+    #[serde(default)]
+    pub json_schema_strict: bool,
 }
+
+fn default_json_schema_name() -> String { "response".into() }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageInput {

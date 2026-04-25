@@ -55,7 +55,9 @@ fn build_payload(messages: &[Message], config: &PriestConfig, output_spec: &Outp
     if let Some(max_tokens) = config.max_output_tokens {
         payload["options"] = json!({ "num_predict": max_tokens });
     }
-    if output_spec.provider_format.as_deref() == Some("json") {
+    if let Some(ref schema) = output_spec.json_schema {
+        payload["format"] = schema.clone();
+    } else if output_spec.provider_format.as_deref() == Some("json") {
         payload["format"] = json!("json");
     }
     for (k, v) in &config.provider_options {

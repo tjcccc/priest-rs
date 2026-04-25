@@ -57,11 +57,17 @@ fn map_stop(r: Option<&str>) -> Option<String> {
     }.to_string())
 }
 
-fn build_payload(messages: &[Message], config: &PriestConfig, stream: bool) -> (Value, Option<String>) {
-    let system_parts: Vec<&str> = messages.iter()
+fn build_payload(messages: &[Message], config: &PriestConfig, output_spec: &OutputSpec, stream: bool) -> (Value, Option<String>) {
+    let mut system_parts: Vec<String> = messages.iter()
         .filter(|m| m.role == "system")
-        .map(|m| m.content.as_str())
+        .map(|m| m.content.clone())
         .collect();
+    if let Some(ref schema) = output_spec.json_schema {
+        let schema_str = serde_json::to_string_pretty(schema).unwrap_or_default();
+        system_parts.push(format!(
+            "Respond with a valid JSON object that conforms to the following JSON Schema:\n\n<schema>\n{schema_str}\n</schema>\n\nReturn only the JSON object — no explanation, no markdown fences."
+        ));
+    }
     let turns: Vec<Value> = messages.iter()
         .filter(|m| m.role != "system")
         .map(|m| json!({"role": m.role, "content": m.content}))
@@ -89,10 +95,10 @@ impl ProviderAdapter for AnthropicProvider {
         &self,
         messages: &[Message],
         config: &PriestConfig,
-        _output_spec: &OutputSpec,
+        output_spec: &OutputSpec,
     ) -> Result<AdapterResult, PriestError> {
         let url = format!("{}/v1/messages", self.base_url);
-        let (payload, _) = build_payload(messages, config, false);
+        let (payload, _) = build_payload(messages, config, output_spec, false);
         let timeout = Duration::from_secs_f64(config.timeout_seconds);
 
         let resp = self.client
@@ -137,10 +143,10 @@ impl ProviderAdapter for AnthropicProvider {
         &self,
         messages: &[Message],
         config: &PriestConfig,
-        _output_spec: &OutputSpec,
+        output_spec: &OutputSpec,
     ) -> Result<BoxStream<'static, Result<String, PriestError>>, PriestError> {
         let url = format!("{}/v1/messages", self.base_url);
-        let (payload, _) = build_payload(messages, config, true);
+        let (payload, _) = build_payload(messages, config, output_spec, true);
         let timeout = Duration::from_secs_f64(config.timeout_seconds);
         let provider = config.provider.clone();
 

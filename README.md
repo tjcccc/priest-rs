@@ -191,8 +191,30 @@ let mut req = PriestRequest::new(config, "List three planets as JSON.");
 req.output = OutputSpec {
     provider_format: Some("json".into()),  // Ollama format field / OpenAI response_format
     prompt_format:   Some("json".into()),  // Injects instruction into system prompt
+    ..Default::default()
 };
 ```
+
+For strict schema compliance, use `json_schema` instead:
+
+```rust
+use priest::schema::request::OutputSpec;
+use serde_json::json;
+
+let mut req = PriestRequest::new(config, "Give me a person object.");
+req.output = OutputSpec {
+    json_schema: Some(json!({
+        "type": "object",
+        "properties": { "name": { "type": "string" }, "age": { "type": "integer" } },
+        "required": ["name", "age"],
+    })),
+    json_schema_name:   "person".into(),  // optional, defaults to "response"
+    json_schema_strict: false,            // true requires additionalProperties:false on all objects
+    ..Default::default()
+};
+```
+
+`json_schema` maps to `response_format:{type:"json_schema"}` for OpenAI-compat, `format:<schema>` for Ollama (v0.5+), and system message injection for Anthropic. It takes precedence over `provider_format` when both are set.
 
 `response.text` is always the raw string. `priest` never parses the output.
 
