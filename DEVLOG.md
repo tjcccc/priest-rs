@@ -1,5 +1,13 @@
 # DEVLOG
 
+## 2026-05-08 — v2.3.0 — optional profile memory loading
+
+- Added `FilesystemProfileLoader::with_include_memories(root, false)` so host apps can load profile identity/rules/custom files without injecting `memories/`
+- When memory loading is disabled, `memories/*.md` and `*.txt` files are ignored and not tracked for cache invalidation
+- Updated `SPEC_VERSION` and crate version to `2.3.0`
+
+---
+
 ## 2026-04-25 — v2.2.0 — json_schema structured output
 
 Added `json_schema`, `json_schema_name`, and `json_schema_strict` fields to `OutputSpec` (serde defaults: `None`, `"response"`, `false`).

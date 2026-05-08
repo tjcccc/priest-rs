@@ -1,6 +1,6 @@
 mod mock_adapter;
 
-use std::sync::Arc;
+use mock_adapter::MockAdapter;
 use priest::engine::PriestEngine;
 use priest::errors::PriestError;
 use priest::profile::default_profile::built_in_default;
@@ -8,7 +8,7 @@ use priest::profile::loader::ProfileLoader;
 use priest::schema::config::PriestConfig;
 use priest::schema::request::{PriestRequest, SessionRef};
 use priest::session::in_memory::InMemorySessionStore;
-use mock_adapter::MockAdapter;
+use std::sync::Arc;
 
 struct FixedProfileLoader;
 impl ProfileLoader for FixedProfileLoader {
@@ -16,7 +16,9 @@ impl ProfileLoader for FixedProfileLoader {
         if name == "default" {
             Ok(built_in_default())
         } else {
-            Err(PriestError::ProfileNotFound { profile: name.to_string() })
+            Err(PriestError::ProfileNotFound {
+                profile: name.to_string(),
+            })
         }
     }
 }
@@ -26,9 +28,13 @@ fn engine_with_mock(text: &str) -> PriestEngine {
         .register("mock", Box::new(MockAdapter::ok(text)))
 }
 
-fn config() -> PriestConfig { PriestConfig::new("mock", "m") }
+fn config() -> PriestConfig {
+    PriestConfig::new("mock", "m")
+}
 
-fn request(prompt: &str) -> PriestRequest { PriestRequest::new(config(), prompt) }
+fn request(prompt: &str) -> PriestRequest {
+    PriestRequest::new(config(), prompt)
+}
 
 // ── Basic run ────────────────────────────────────────────────────────────────
 
@@ -66,17 +72,23 @@ async fn run_returns_usage_info() {
 async fn run_errors_when_provider_not_registered() {
     let engine = PriestEngine::new(Arc::new(FixedProfileLoader));
     let result = engine.run(request("hi")).await;
-    assert!(matches!(result, Err(PriestError::ProviderNotRegistered { .. })));
+    assert!(matches!(
+        result,
+        Err(PriestError::ProviderNotRegistered { .. })
+    ));
 }
 
 // ── Provider error captured in response ──────────────────────────────────────
 
 #[tokio::test]
 async fn provider_error_captured_in_response() {
-    let engine = PriestEngine::new(Arc::new(FixedProfileLoader))
-        .register("mock", Box::new(MockAdapter::failing(
-            PriestError::ProviderError { provider: "mock".into(), message: "boom".into() }
-        )));
+    let engine = PriestEngine::new(Arc::new(FixedProfileLoader)).register(
+        "mock",
+        Box::new(MockAdapter::failing(PriestError::ProviderError {
+            provider: "mock".into(),
+            message: "boom".into(),
+        })),
+    );
     let resp = engine.run(request("hi")).await.unwrap();
     assert!(!resp.ok());
     assert!(resp.error.is_some());
@@ -89,7 +101,8 @@ async fn provider_error_captured_in_response() {
 async fn metadata_echoed_in_response() {
     let engine = engine_with_mock("ok");
     let mut req = request("hi");
-    req.metadata.insert("key".into(), serde_json::json!("value"));
+    req.metadata
+        .insert("key".into(), serde_json::json!("value"));
     let resp = engine.run(req).await.unwrap();
     assert_eq!(resp.metadata["key"], serde_json::json!("value"));
 }
@@ -145,7 +158,11 @@ async fn session_not_found_errors_when_create_if_missing_false() {
         .with_session_store(store.clone());
 
     let mut req = request("hi");
-    req.session = Some(SessionRef { id: "ghost".into(), continue_existing: true, create_if_missing: false });
+    req.session = Some(SessionRef {
+        id: "ghost".into(),
+        continue_existing: true,
+        create_if_missing: false,
+    });
     let result = engine.run(req).await;
     assert!(matches!(result, Err(PriestError::SessionNotFound { .. })));
 }

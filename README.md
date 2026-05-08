@@ -8,7 +8,7 @@ Rust 2021 · async/await (tokio) · Zero system dependencies
 
 ## Overview
 
-`priest` is a Rust crate that implements the priest protocol spec v2.2.0 natively — no Python server, no FFI. It is designed for Rust services, CLI tools, and any async Rust host that needs to talk to a local or remote AI provider.
+`priest` is a Rust crate that implements the priest protocol spec v2.3.0 natively — no Python server, no FFI. It is designed for Rust services, CLI tools, and any async Rust host that needs to talk to a local or remote AI provider.
 
 The core API is two methods on `PriestEngine`:
 
@@ -23,7 +23,7 @@ The core API is two methods on `PriestEngine`:
 
 ```toml
 [dependencies]
-priest = "2.0.0"
+priest = "2.3.0"
 tokio  = { version = "1", features = ["full"] }
 ```
 
@@ -157,6 +157,7 @@ let loader = Arc::new(FilesystemProfileLoader::new("./profiles"));
 If the named directory or `PROFILE.md` is not found, `FilesystemProfileLoader` falls back to the built-in default profile when `name == "default"`, and returns `Err(PriestError::ProfileNotFound)` for any other name.
 
 The loader caches loaded profiles per instance. Cache key: `(max_mtime, file_count)` across all profile files. Invalidates automatically when any file changes, is added, or is removed.
+Use `FilesystemProfileLoader::with_include_memories("./profiles", false)` when the host app owns memory selection and passes selected memory through `PriestRequest.memory`. In that mode, `memories/` files are neither loaded nor tracked for cache invalidation.
 
 ---
 
@@ -311,10 +312,10 @@ let engine = PriestEngine::new(loader)
 
 ## Spec
 
-`priest` targets priest protocol spec **v2.2.0**. The spec lives in the [`priest`](https://github.com/tjcccc/priest) repository under `spec/`. It defines the canonical context assembly algorithm, session schema, timestamp format, and error codes that all priest SDKs must implement identically.
+`priest` targets priest protocol spec **v2.3.0**. The spec lives in the [`priest`](https://github.com/tjcccc/priest) repository under `spec/`. It defines the canonical context assembly algorithm, session schema, timestamp format, and error codes that all priest SDKs must implement identically.
 
 ```rust
-priest::SPEC_VERSION  // "2.2.0"
+priest::SPEC_VERSION  // "2.3.0"
 ```
 
 ---

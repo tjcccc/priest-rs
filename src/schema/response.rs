@@ -52,7 +52,12 @@ impl UsageInfo {
             (Some(i), Some(o)) => Some(i + o),
             _ => None,
         };
-        Self { input_tokens: input, output_tokens: output, total_tokens: total, estimated_cost_usd: None }
+        Self {
+            input_tokens: input,
+            output_tokens: output,
+            total_tokens: total,
+            estimated_cost_usd: None,
+        }
     }
 }
 

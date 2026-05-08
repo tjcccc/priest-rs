@@ -5,9 +5,9 @@ use std::path::Path;
 use std::sync::Mutex;
 use uuid::Uuid;
 
-use crate::errors::PriestError;
 use super::model::{Session, Turn};
 use super::store::SessionStore;
+use crate::errors::PriestError;
 
 pub struct SqliteSessionStore {
     conn: Mutex<Connection>,
@@ -35,15 +35,19 @@ impl SqliteSessionStore {
                  timestamp  TEXT NOT NULL
              );",
         )
-        .map_err(|e| PriestError::SessionStoreError { message: e.to_string() })?;
-        Ok(Self { conn: Mutex::new(conn) })
+        .map_err(|e| PriestError::SessionStoreError {
+            message: e.to_string(),
+        })?;
+        Ok(Self {
+            conn: Mutex::new(conn),
+        })
     }
 
     fn parse_ts(s: &str) -> DateTime<Utc> {
         // Lenient: accept with or without microseconds, with or without +00:00
         let clean = s.trim_end_matches("+00:00").trim_end_matches('Z');
         let fmt_micro = "%Y-%m-%dT%H:%M:%S%.6f";
-        let fmt_sec   = "%Y-%m-%dT%H:%M:%S";
+        let fmt_sec = "%Y-%m-%dT%H:%M:%S";
         NaiveDateTime::parse_from_str(clean, fmt_micro)
             .or_else(|_| NaiveDateTime::parse_from_str(clean, fmt_sec))
             .map(|ndt| ndt.and_utc())
@@ -70,16 +74,30 @@ impl SessionStore for SqliteSessionStore {
         };
 
         let mut stmt = conn
-            .prepare("SELECT role, content, timestamp FROM turns WHERE session_id = ?1 ORDER BY id ASC")
-            .map_err(|e| PriestError::SessionStoreError { message: e.to_string() })?;
+            .prepare(
+                "SELECT role, content, timestamp FROM turns WHERE session_id = ?1 ORDER BY id ASC",
+            )
+            .map_err(|e| PriestError::SessionStoreError {
+                message: e.to_string(),
+            })?;
 
         let turns: Vec<Turn> = stmt
             .query_map(params![sid], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
             })
-            .map_err(|e| PriestError::SessionStoreError { message: e.to_string() })?
+            .map_err(|e| PriestError::SessionStoreError {
+                message: e.to_string(),
+            })?
             .filter_map(|r| r.ok())
-            .map(|(role, content, ts)| Turn { role, content, timestamp: Self::parse_ts(&ts) })
+            .map(|(role, content, ts)| Turn {
+                role,
+                content,
+                timestamp: Self::parse_ts(&ts),
+            })
             .collect();
 
         Ok(Some(Session {
@@ -93,7 +111,9 @@ impl SessionStore for SqliteSessionStore {
     }
 
     async fn create(&self, profile_name: &str, id: Option<&str>) -> Result<Session, PriestError> {
-        let session_id = id.map(|s| s.to_string()).unwrap_or_else(|| Uuid::new_v4().to_string());
+        let session_id = id
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
         let session = Session::new(session_id.clone(), profile_name);
         let conn = self.conn.lock().unwrap();
         conn.execute(
@@ -115,17 +135,31 @@ impl SessionStore for SqliteSessionStore {
             "UPDATE sessions SET updated_at = ?1, metadata = '{}' WHERE id = ?2",
             params![Session::format_timestamp(&session.updated_at), session.id],
         )
-        .map_err(|e| PriestError::SessionStoreError { message: e.to_string() })?;
+        .map_err(|e| PriestError::SessionStoreError {
+            message: e.to_string(),
+        })?;
 
-        conn.execute("DELETE FROM turns WHERE session_id = ?1", params![session.id])
-            .map_err(|e| PriestError::SessionStoreError { message: e.to_string() })?;
+        conn.execute(
+            "DELETE FROM turns WHERE session_id = ?1",
+            params![session.id],
+        )
+        .map_err(|e| PriestError::SessionStoreError {
+            message: e.to_string(),
+        })?;
 
         for turn in &session.turns {
             conn.execute(
                 "INSERT INTO turns (session_id, role, content, timestamp) VALUES (?1, ?2, ?3, ?4)",
-                params![session.id, turn.role, turn.content, Session::format_timestamp(&turn.timestamp)],
+                params![
+                    session.id,
+                    turn.role,
+                    turn.content,
+                    Session::format_timestamp(&turn.timestamp)
+                ],
             )
-            .map_err(|e| PriestError::SessionStoreError { message: e.to_string() })?;
+            .map_err(|e| PriestError::SessionStoreError {
+                message: e.to_string(),
+            })?;
         }
         Ok(())
     }

@@ -7,11 +7,11 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::time::Duration;
 
+use super::adapter::{AdapterResult, ProviderAdapter};
 use crate::context_builder::Message;
 use crate::errors::PriestError;
 use crate::schema::config::PriestConfig;
 use crate::schema::request::OutputSpec;
-use super::adapter::{AdapterResult, ProviderAdapter};
 
 pub struct OpenAICompatProvider {
     base_url: String,
@@ -21,7 +21,11 @@ pub struct OpenAICompatProvider {
 
 impl OpenAICompatProvider {
     pub fn new(base_url: impl Into<String>, api_key: impl Into<String>) -> Self {
-        Self { base_url: base_url.into(), api_key: api_key.into(), client: Client::new() }
+        Self {
+            base_url: base_url.into(),
+            api_key: api_key.into(),
+            client: Client::new(),
+        }
     }
 }
 
@@ -49,19 +53,34 @@ struct OAIUsage {
 }
 
 fn map_finish(r: Option<&str>) -> Option<String> {
-    Some(match r? {
-        "stop"           => "stop",
-        "length"         => "length",
-        "content_filter" => "unknown",
-        _                => "unknown",
-    }.to_string())
+    Some(
+        match r? {
+            "stop" => "stop",
+            "length" => "length",
+            "content_filter" => "unknown",
+            _ => "unknown",
+        }
+        .to_string(),
+    )
 }
 
-fn build_payload(messages: &[Message], config: &PriestConfig, output_spec: &OutputSpec, stream: bool) -> Value {
-    let msgs: Vec<Value> = messages.iter().map(|m| json!({"role": m.role, "content": m.content})).collect();
+fn build_payload(
+    messages: &[Message],
+    config: &PriestConfig,
+    output_spec: &OutputSpec,
+    stream: bool,
+) -> Value {
+    let msgs: Vec<Value> = messages
+        .iter()
+        .map(|m| json!({"role": m.role, "content": m.content}))
+        .collect();
     let mut payload = json!({ "model": config.model, "messages": msgs });
-    if stream { payload["stream"] = json!(true); }
-    if let Some(max_t) = config.max_output_tokens { payload["max_tokens"] = json!(max_t); }
+    if stream {
+        payload["stream"] = json!(true);
+    }
+    if let Some(max_t) = config.max_output_tokens {
+        payload["max_tokens"] = json!(max_t);
+    }
     if let Some(ref schema) = output_spec.json_schema {
         payload["response_format"] = json!({
             "type": "json_schema",
@@ -81,7 +100,10 @@ fn build_payload(messages: &[Message], config: &PriestConfig, output_spec: &Outp
 }
 
 fn provider_error(config: &PriestConfig, msg: impl Into<String>) -> PriestError {
-    PriestError::ProviderError { provider: config.provider.clone(), message: msg.into() }
+    PriestError::ProviderError {
+        provider: config.provider.clone(),
+        message: msg.into(),
+    }
 }
 
 #[async_trait]
@@ -96,7 +118,8 @@ impl ProviderAdapter for OpenAICompatProvider {
         let payload = build_payload(messages, config, output_spec, false);
         let timeout = Duration::from_secs_f64(config.timeout_seconds);
 
-        let resp = self.client
+        let resp = self
+            .client
             .post(&url)
             .bearer_auth(&self.api_key)
             .json(&payload)
@@ -105,25 +128,38 @@ impl ProviderAdapter for OpenAICompatProvider {
             .await
             .map_err(|e| {
                 if e.is_timeout() {
-                    PriestError::ProviderTimeout { provider: config.provider.clone(), timeout: config.timeout_seconds }
+                    PriestError::ProviderTimeout {
+                        provider: config.provider.clone(),
+                        timeout: config.timeout_seconds,
+                    }
                 } else {
                     provider_error(config, e.to_string())
                 }
             })?;
 
         if resp.status() == 429 {
-            let retry = resp.headers()
+            let retry = resp
+                .headers()
                 .get("retry-after")
                 .and_then(|v| v.to_str().ok())
                 .and_then(|s| s.parse().ok());
-            return Err(PriestError::ProviderRateLimited { provider: config.provider.clone(), retry_after: retry });
+            return Err(PriestError::ProviderRateLimited {
+                provider: config.provider.clone(),
+                retry_after: retry,
+            });
         }
         if !resp.status().is_success() {
             return Err(provider_error(config, format!("HTTP {}", resp.status())));
         }
 
-        let data: OAIResponse = resp.json().await.map_err(|e| provider_error(config, e.to_string()))?;
-        let choice = data.choices.into_iter().next()
+        let data: OAIResponse = resp
+            .json()
+            .await
+            .map_err(|e| provider_error(config, e.to_string()))?;
+        let choice = data
+            .choices
+            .into_iter()
+            .next()
             .ok_or_else(|| provider_error(config, "empty choices"))?;
         Ok(AdapterResult {
             text: choice.message.content.unwrap_or_default(),
@@ -144,7 +180,8 @@ impl ProviderAdapter for OpenAICompatProvider {
         let timeout = Duration::from_secs_f64(config.timeout_seconds);
         let provider = config.provider.clone();
 
-        let resp = self.client
+        let resp = self
+            .client
             .post(&url)
             .bearer_auth(&self.api_key)
             .json(&payload)
@@ -153,14 +190,23 @@ impl ProviderAdapter for OpenAICompatProvider {
             .await
             .map_err(|e| {
                 if e.is_timeout() {
-                    PriestError::ProviderTimeout { provider: provider.clone(), timeout: config.timeout_seconds }
+                    PriestError::ProviderTimeout {
+                        provider: provider.clone(),
+                        timeout: config.timeout_seconds,
+                    }
                 } else {
-                    PriestError::ProviderError { provider: provider.clone(), message: e.to_string() }
+                    PriestError::ProviderError {
+                        provider: provider.clone(),
+                        message: e.to_string(),
+                    }
                 }
             })?;
 
         if !resp.status().is_success() {
-            return Err(PriestError::ProviderError { provider, message: format!("HTTP {}", resp.status()) });
+            return Err(PriestError::ProviderError {
+                provider,
+                message: format!("HTTP {}", resp.status()),
+            });
         }
 
         let lines = resp.bytes_stream();
@@ -170,15 +216,20 @@ impl ProviderAdapter for OpenAICompatProvider {
             let prov = provider2.clone();
             let bytes = match chunk {
                 Ok(b) => b,
-                Err(e) => return futures::stream::iter(vec![Err(
-                    PriestError::ProviderError { provider: prov, message: e.to_string() }
-                )]),
+                Err(e) => {
+                    return futures::stream::iter(vec![Err(PriestError::ProviderError {
+                        provider: prov,
+                        message: e.to_string(),
+                    })])
+                }
             };
             let text = String::from_utf8_lossy(&bytes).to_string();
             let mut items = vec![];
             for line in text.lines() {
                 let line = line.trim();
-                if line == "data: [DONE]" { break; }
+                if line == "data: [DONE]" {
+                    break;
+                }
                 if let Some(data) = line.strip_prefix("data: ") {
                     if let Ok(v) = serde_json::from_str::<Value>(data) {
                         if let Some(content) = v["choices"][0]["delta"]["content"].as_str() {

@@ -10,11 +10,13 @@ use crate::errors::PriestError;
 use crate::profile::loader::ProfileLoader;
 use crate::providers::adapter::ProviderAdapter;
 use crate::schema::request::PriestRequest;
-use crate::schema::response::{ExecutionInfo, PriestErrorModel, PriestResponse, SessionInfo, UsageInfo};
+use crate::schema::response::{
+    ExecutionInfo, PriestErrorModel, PriestResponse, SessionInfo, UsageInfo,
+};
 use crate::session::model::Session;
 use crate::session::store::SessionStore;
 
-pub const SPEC_VERSION: &str = "2.2.0";
+pub const SPEC_VERSION: &str = "2.3.0";
 
 pub struct PriestEngine {
     adapters: HashMap<String, Box<dyn ProviderAdapter>>,
@@ -24,7 +26,11 @@ pub struct PriestEngine {
 
 impl PriestEngine {
     pub fn new(profile_loader: Arc<dyn ProfileLoader>) -> Self {
-        Self { adapters: HashMap::new(), profile_loader, session_store: None }
+        Self {
+            adapters: HashMap::new(),
+            profile_loader,
+            session_store: None,
+        }
     }
 
     pub fn with_session_store(mut self, store: Arc<dyn SessionStore>) -> Self {
@@ -38,8 +44,11 @@ impl PriestEngine {
     }
 
     pub async fn run(&self, request: PriestRequest) -> Result<PriestResponse, PriestError> {
-        let adapter = self.adapters.get(&request.config.provider)
-            .ok_or_else(|| PriestError::ProviderNotRegistered { provider: request.config.provider.clone() })?;
+        let adapter = self.adapters.get(&request.config.provider).ok_or_else(|| {
+            PriestError::ProviderNotRegistered {
+                provider: request.config.provider.clone(),
+            }
+        })?;
 
         let profile = self.profile_loader.load(&request.profile)?;
         let (session, is_new) = self.resolve_session(&request).await?;
@@ -47,7 +56,9 @@ impl PriestEngine {
         let messages = build_messages(&request, &profile, session.as_ref());
 
         let start = Instant::now();
-        let result = adapter.complete(&messages, &request.config, &request.output).await;
+        let result = adapter
+            .complete(&messages, &request.config, &request.output)
+            .await;
         let latency_ms = start.elapsed().as_millis() as i64;
 
         let execution = ExecutionInfo {
@@ -66,7 +77,10 @@ impl PriestEngine {
                         finished_reason: adapter_result.finish_reason.clone(),
                         ..execution
                     },
-                    usage: Some(UsageInfo::new(adapter_result.input_tokens, adapter_result.output_tokens)),
+                    usage: Some(UsageInfo::new(
+                        adapter_result.input_tokens,
+                        adapter_result.output_tokens,
+                    )),
                     session: None,
                     error: None,
                     metadata: request.metadata.clone(),
@@ -85,19 +99,17 @@ impl PriestEngine {
 
                 Ok(resp)
             }
-            Err(e) => {
-                Ok(PriestResponse {
-                    text: None,
-                    execution: ExecutionInfo {
-                        finished_reason: Some("error".into()),
-                        ..execution
-                    },
-                    usage: None,
-                    session: None,
-                    error: Some(PriestErrorModel::from_priest_error(&e)),
-                    metadata: request.metadata.clone(),
-                })
-            }
+            Err(e) => Ok(PriestResponse {
+                text: None,
+                execution: ExecutionInfo {
+                    finished_reason: Some("error".into()),
+                    ..execution
+                },
+                usage: None,
+                session: None,
+                error: Some(PriestErrorModel::from_priest_error(&e)),
+                metadata: request.metadata.clone(),
+            }),
         }
     }
 
@@ -105,15 +117,20 @@ impl PriestEngine {
         &self,
         request: PriestRequest,
     ) -> Result<BoxStream<'static, Result<String, PriestError>>, PriestError> {
-        let adapter = self.adapters.get(&request.config.provider)
-            .ok_or_else(|| PriestError::ProviderNotRegistered { provider: request.config.provider.clone() })?;
+        let adapter = self.adapters.get(&request.config.provider).ok_or_else(|| {
+            PriestError::ProviderNotRegistered {
+                provider: request.config.provider.clone(),
+            }
+        })?;
 
         let profile = self.profile_loader.load(&request.profile)?;
         let (session, _is_new) = self.resolve_session(&request).await?;
 
         let messages = build_messages(&request, &profile, session.as_ref());
 
-        let chunk_stream = adapter.stream(&messages, &request.config, &request.output).await?;
+        let chunk_stream = adapter
+            .stream(&messages, &request.config, &request.output)
+            .await?;
 
         let store = self.session_store.clone();
         let prompt = request.prompt.clone();
@@ -152,10 +169,14 @@ impl PriestEngine {
                 return Ok((Some(sess), false));
             }
             if session_ref.create_if_missing {
-                let sess = store.create(&request.profile, Some(&session_ref.id)).await?;
+                let sess = store
+                    .create(&request.profile, Some(&session_ref.id))
+                    .await?;
                 return Ok((Some(sess), true));
             }
-            return Err(PriestError::SessionNotFound { session_id: session_ref.id.clone() });
+            return Err(PriestError::SessionNotFound {
+                session_id: session_ref.id.clone(),
+            });
         }
 
         let sess = store.create(&request.profile, None).await?;

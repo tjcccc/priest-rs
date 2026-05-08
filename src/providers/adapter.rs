@@ -1,9 +1,9 @@
-use async_trait::async_trait;
-use futures::stream::BoxStream;
 use crate::context_builder::Message;
 use crate::errors::PriestError;
 use crate::schema::config::PriestConfig;
 use crate::schema::request::OutputSpec;
+use async_trait::async_trait;
+use futures::stream::BoxStream;
 
 #[derive(Debug, Clone)]
 pub struct AdapterResult {

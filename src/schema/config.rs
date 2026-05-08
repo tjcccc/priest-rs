@@ -18,7 +18,9 @@ pub struct PriestConfig {
     pub provider_options: HashMap<String, Value>,
 }
 
-fn default_timeout() -> f64 { 60.0 }
+fn default_timeout() -> f64 {
+    60.0
+}
 
 impl PriestConfig {
     pub fn new(provider: impl Into<String>, model: impl Into<String>) -> Self {

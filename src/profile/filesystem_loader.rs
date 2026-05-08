@@ -3,10 +3,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::SystemTime;
 
-use crate::errors::PriestError;
 use super::default_profile::built_in_default;
 use super::loader::ProfileLoader;
 use super::model::Profile;
+use crate::errors::PriestError;
 
 #[derive(Debug, Clone, PartialEq)]
 struct CacheKey {
@@ -21,12 +21,24 @@ struct CacheEntry {
 
 pub struct FilesystemProfileLoader {
     profiles_root: PathBuf,
+    include_memories: bool,
     cache: Mutex<HashMap<String, CacheEntry>>,
 }
 
 impl FilesystemProfileLoader {
     pub fn new(profiles_root: impl Into<PathBuf>) -> Self {
-        Self { profiles_root: profiles_root.into(), cache: Mutex::new(HashMap::new()) }
+        Self::with_include_memories(profiles_root, true)
+    }
+
+    pub fn with_include_memories(
+        profiles_root: impl Into<PathBuf>,
+        include_memories: bool,
+    ) -> Self {
+        Self {
+            profiles_root: profiles_root.into(),
+            include_memories,
+            cache: Mutex::new(HashMap::new()),
+        }
     }
 }
 
@@ -36,7 +48,7 @@ impl ProfileLoader for FilesystemProfileLoader {
         let profile_md = profile_dir.join("PROFILE.md");
 
         if profile_md.exists() {
-            let key = compute_cache_key(&profile_dir);
+            let key = compute_cache_key(&profile_dir, self.include_memories);
 
             // Cache hit check
             {
@@ -48,11 +60,17 @@ impl ProfileLoader for FilesystemProfileLoader {
                 }
             }
 
-            let profile = load_from_dir(name, &profile_dir)?;
+            let profile = load_from_dir(name, &profile_dir, self.include_memories)?;
 
             {
                 let mut cache = self.cache.lock().unwrap();
-                cache.insert(name.to_string(), CacheEntry { key, profile: profile.clone() });
+                cache.insert(
+                    name.to_string(),
+                    CacheEntry {
+                        key,
+                        profile: profile.clone(),
+                    },
+                );
             }
 
             return Ok(profile);
@@ -62,11 +80,13 @@ impl ProfileLoader for FilesystemProfileLoader {
             return Ok(built_in_default());
         }
 
-        Err(PriestError::ProfileNotFound { profile: name.to_string() })
+        Err(PriestError::ProfileNotFound {
+            profile: name.to_string(),
+        })
     }
 }
 
-fn compute_cache_key(dir: &Path) -> CacheKey {
+fn compute_cache_key(dir: &Path, include_memories: bool) -> CacheKey {
     let mut files: Vec<PathBuf> = vec![];
 
     for filename in &["PROFILE.md", "RULES.md", "CUSTOM.md", "profile.toml"] {
@@ -77,7 +97,7 @@ fn compute_cache_key(dir: &Path) -> CacheKey {
     }
 
     let memories_dir = dir.join("memories");
-    if memories_dir.is_dir() {
+    if include_memories && memories_dir.is_dir() {
         if let Ok(entries) = std::fs::read_dir(&memories_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
@@ -99,10 +119,13 @@ fn compute_cache_key(dir: &Path) -> CacheKey {
         .max()
         .unwrap_or(0);
 
-    CacheKey { max_mtime, file_count }
+    CacheKey {
+        max_mtime,
+        file_count,
+    }
 }
 
-fn load_from_dir(name: &str, dir: &Path) -> Result<Profile, PriestError> {
+fn load_from_dir(name: &str, dir: &Path, include_memories: bool) -> Result<Profile, PriestError> {
     let read = |p: &Path| -> Result<String, PriestError> {
         std::fs::read_to_string(p).map_err(|e| PriestError::ProfileInvalid {
             profile: name.to_string(),
@@ -113,20 +136,34 @@ fn load_from_dir(name: &str, dir: &Path) -> Result<Profile, PriestError> {
     let identity = read(&dir.join("PROFILE.md"))?;
 
     let rules_path = dir.join("RULES.md");
-    let rules = if rules_path.exists() { read(&rules_path)? } else { String::new() };
+    let rules = if rules_path.exists() {
+        read(&rules_path)?
+    } else {
+        String::new()
+    };
 
     let custom_path = dir.join("CUSTOM.md");
-    let custom = if custom_path.exists() { read(&custom_path)? } else { String::new() };
+    let custom = if custom_path.exists() {
+        read(&custom_path)?
+    } else {
+        String::new()
+    };
 
     let mut memories = vec![];
     let memories_dir = dir.join("memories");
-    if memories_dir.is_dir() {
+    if include_memories && memories_dir.is_dir() {
         let mut mem_files: Vec<PathBuf> = std::fs::read_dir(&memories_dir)
-            .map_err(|e| PriestError::ProfileInvalid { profile: name.to_string(), reason: e.to_string() })?
+            .map_err(|e| PriestError::ProfileInvalid {
+                profile: name.to_string(),
+                reason: e.to_string(),
+            })?
             .flatten()
             .map(|e| e.path())
             .filter(|p| {
-                p.extension().and_then(|e| e.to_str()).map(|e| e == "md" || e == "txt").unwrap_or(false)
+                p.extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| e == "md" || e == "txt")
+                    .unwrap_or(false)
             })
             .collect();
         mem_files.sort();
@@ -135,5 +172,12 @@ fn load_from_dir(name: &str, dir: &Path) -> Result<Profile, PriestError> {
         }
     }
 
-    Ok(Profile::new(name, identity, rules, custom, memories, Default::default()))
+    Ok(Profile::new(
+        name,
+        identity,
+        rules,
+        custom,
+        memories,
+        Default::default(),
+    ))
 }

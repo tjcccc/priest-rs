@@ -1,9 +1,13 @@
-use priest::context_builder::{build_messages, FORMAT_INSTRUCTION_CODE, FORMAT_INSTRUCTION_JSON, FORMAT_INSTRUCTION_XML};
+use priest::context_builder::{
+    build_messages, FORMAT_INSTRUCTION_CODE, FORMAT_INSTRUCTION_JSON, FORMAT_INSTRUCTION_XML,
+};
 use priest::profile::model::Profile;
 use priest::schema::config::PriestConfig;
 use priest::schema::request::PriestRequest;
 
-fn config() -> PriestConfig { PriestConfig::new("mock", "m") }
+fn config() -> PriestConfig {
+    PriestConfig::new("mock", "m")
+}
 
 fn empty_profile() -> Profile {
     Profile::new("default", "", "", "", vec![], Default::default())
@@ -76,7 +80,14 @@ fn profile_memories_under_loaded_memories_heading() {
 
 #[test]
 fn multiple_profile_memories_joined_with_single_newline() {
-    let profile = Profile::new("p", "", "", "", vec!["A.".into(), "B.".into()], Default::default());
+    let profile = Profile::new(
+        "p",
+        "",
+        "",
+        "",
+        vec!["A.".into(), "B.".into()],
+        Default::default(),
+    );
     let msgs = build_messages(&make_request("hi"), &profile, None);
     assert!(msgs[0].content.contains("## Loaded Memories\n\nA.\nB."));
 }
@@ -104,7 +115,10 @@ fn dedup_drops_memory_matching_profile_memories() {
     let mem_idx = sys.find("## Memory\n\n").unwrap();
     let mem_section = &sys[mem_idx..];
     assert!(mem_section.contains("Fact B."));
-    assert!(!mem_section.contains("Fact A."), "dedup should drop Fact A from dynamic block");
+    assert!(
+        !mem_section.contains("Fact A."),
+        "dedup should drop Fact A from dynamic block"
+    );
 }
 
 #[test]
@@ -155,20 +169,35 @@ fn trim_drops_dynamic_memory_tail_first() {
     req.memory = vec!["A.".into(), "B.".repeat(100)];
     let msgs = build_messages(&req, &empty_profile(), None);
     // B. should be trimmed (tail), A. may survive or also be trimmed
-    let sys_content = if msgs[0].role == "system" { &msgs[0].content } else { "" };
+    let sys_content = if msgs[0].role == "system" {
+        &msgs[0].content
+    } else {
+        ""
+    };
     assert!(sys_content.len() <= 50 || sys_content.is_empty());
 }
 
 #[test]
 fn trim_dynamic_before_profile_memories() {
-    let profile = Profile::new("p", "", "", "", vec!["Profile mem.".into()], Default::default());
+    let profile = Profile::new(
+        "p",
+        "",
+        "",
+        "",
+        vec!["Profile mem.".into()],
+        Default::default(),
+    );
     let mut req = make_request("hi");
     req.config.max_system_chars = Some(60);
     req.memory = vec!["Dynamic mem.".into()];
     // 60 chars is tight — dynamic memory should be dropped before profile memories
     let msgs = build_messages(&req, &profile, None);
     // After trimming, profile memory should still be present
-    let sys = if msgs[0].role == "system" { msgs[0].content.clone() } else { String::new() };
+    let sys = if msgs[0].role == "system" {
+        msgs[0].content.clone()
+    } else {
+        String::new()
+    };
     // Either everything fits or dynamic was dropped first
     if sys.len() > 60 {
         // budget exceeded even after all dynamic dropped — that's ok per spec (warn + continue)
@@ -218,12 +247,20 @@ fn user_context_appended_to_user_turn() {
 
 #[test]
 fn session_turns_inserted_before_user_message() {
-    use priest::session::model::{Session, Turn};
     use chrono::Utc;
+    use priest::session::model::{Session, Turn};
 
     let mut sess = Session::new("s1", "default");
-    sess.turns.push(Turn { role: "user".into(), content: "Q1.".into(), timestamp: Utc::now() });
-    sess.turns.push(Turn { role: "assistant".into(), content: "A1.".into(), timestamp: Utc::now() });
+    sess.turns.push(Turn {
+        role: "user".into(),
+        content: "Q1.".into(),
+        timestamp: Utc::now(),
+    });
+    sess.turns.push(Turn {
+        role: "assistant".into(),
+        content: "A1.".into(),
+        timestamp: Utc::now(),
+    });
 
     let msgs = build_messages(&make_request("Q2."), &empty_profile(), Some(&sess));
     assert_eq!(msgs.len(), 3);

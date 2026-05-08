@@ -1,6 +1,6 @@
-use async_trait::async_trait;
-use crate::errors::PriestError;
 use super::model::Session;
+use crate::errors::PriestError;
+use async_trait::async_trait;
 
 #[async_trait]
 pub trait SessionStore: Send + Sync {

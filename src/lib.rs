@@ -9,10 +9,8 @@ pub mod session;
 pub use engine::{PriestEngine, SPEC_VERSION};
 pub use errors::PriestError;
 pub use profile::{
-    default_profile::built_in_default,
-    filesystem_loader::FilesystemProfileLoader,
-    loader::ProfileLoader,
-    model::Profile,
+    default_profile::built_in_default, filesystem_loader::FilesystemProfileLoader,
+    loader::ProfileLoader, model::Profile,
 };
 pub use providers::{
     adapter::{AdapterResult, ProviderAdapter},

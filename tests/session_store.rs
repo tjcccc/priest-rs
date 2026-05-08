@@ -1,7 +1,7 @@
-use tempfile::TempDir;
 use priest::session::in_memory::InMemorySessionStore;
 use priest::session::sqlite::SqliteSessionStore;
 use priest::session::store::SessionStore;
+use tempfile::TempDir;
 
 // ── InMemorySessionStore ──────────────────────────────────────────────────────
 

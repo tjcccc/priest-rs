@@ -1,7 +1,7 @@
+use super::config::PriestConfig;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
-use super::config::PriestConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PriestRequest {
@@ -25,7 +25,9 @@ pub struct PriestRequest {
     pub metadata: HashMap<String, Value>,
 }
 
-fn default_profile() -> String { "default".into() }
+fn default_profile() -> String {
+    "default".into()
+}
 
 impl PriestRequest {
     pub fn new(config: PriestConfig, prompt: impl Into<String>) -> Self {
@@ -53,11 +55,17 @@ pub struct SessionRef {
     pub create_if_missing: bool,
 }
 
-fn bool_true() -> bool { true }
+fn bool_true() -> bool {
+    true
+}
 
 impl SessionRef {
     pub fn new(id: impl Into<String>) -> Self {
-        Self { id: id.into(), continue_existing: true, create_if_missing: true }
+        Self {
+            id: id.into(),
+            continue_existing: true,
+            create_if_missing: true,
+        }
     }
 }
 
@@ -83,7 +91,9 @@ pub struct OutputSpec {
     pub json_schema_strict: bool,
 }
 
-fn default_json_schema_name() -> String { "response".into() }
+fn default_json_schema_name() -> String {
+    "response".into()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageInput {
@@ -97,4 +107,6 @@ pub struct ImageInput {
     pub media_type: String,
 }
 
-fn default_media_type() -> String { "image/jpeg".into() }
+fn default_media_type() -> String {
+    "image/jpeg".into()
+}

@@ -13,11 +13,17 @@ pub struct MockAdapter {
 
 impl MockAdapter {
     pub fn ok(text: impl Into<String>) -> Self {
-        Self { response_text: text.into(), error: None }
+        Self {
+            response_text: text.into(),
+            error: None,
+        }
     }
 
     pub fn failing(e: PriestError) -> Self {
-        Self { response_text: String::new(), error: Some(e) }
+        Self {
+            response_text: String::new(),
+            error: Some(e),
+        }
     }
 }
 
@@ -52,7 +58,10 @@ impl ProviderAdapter for MockAdapter {
         if let Some(ref e) = self.error {
             let msg = e.to_string();
             return Ok(Box::pin(futures::stream::once(async move {
-                Err(PriestError::ProviderError { provider: "mock".into(), message: msg })
+                Err(PriestError::ProviderError {
+                    provider: "mock".into(),
+                    message: msg,
+                })
             })));
         }
         // Yield whole text as a single chunk so reassembly matches exactly
