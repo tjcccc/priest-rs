@@ -7,7 +7,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::time::Duration;
 
-use super::adapter::{AdapterResult, ProviderAdapter};
+use super::adapter::{AdapterCallOptions, AdapterResult, ProviderAdapter};
+use crate::schema::tools::{ToolCall, ToolChoice};
 use crate::context_builder::Message;
 use crate::errors::PriestError;
 use crate::schema::config::PriestConfig;
@@ -49,6 +50,12 @@ struct AnthropicContent {
     #[serde(rename = "type")]
     kind: String,
     text: Option<String>,
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    input: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -62,16 +69,106 @@ fn map_stop(r: Option<&str>) -> Option<String> {
         match r? {
             "end_turn" | "stop_sequence" => "stop",
             "max_tokens" => "length",
+            "tool_use" => "tool_calls",
             _ => "unknown",
         }
         .to_string(),
     )
 }
 
+/// Translate messages to Anthropic wire format. Tool results merge into a
+/// user message of tool_result blocks (Anthropic requires alternating roles);
+/// assistant tool calls become tool_use content blocks.
+fn build_wire_turns(messages: &[Message]) -> Vec<Value> {
+    let mut turns: Vec<Value> = vec![];
+    let mut pending_tool_results: Vec<Value> = vec![];
+
+    for m in messages.iter().filter(|m| m.role != "system") {
+        if m.role == "tool" {
+            pending_tool_results.push(json!({
+                "type": "tool_result",
+                "tool_use_id": m.tool_call_id,
+                "content": m.content,
+            }));
+            continue;
+        }
+        if !pending_tool_results.is_empty() {
+            turns.push(json!({"role": "user", "content": std::mem::take(&mut pending_tool_results)}));
+        }
+        if m.role == "assistant" && m.tool_calls.as_ref().is_some_and(|c| !c.is_empty()) {
+            let mut blocks: Vec<Value> = vec![];
+            if !m.content.is_empty() {
+                blocks.push(json!({"type": "text", "text": m.content}));
+            }
+            for call in m.tool_calls.as_ref().unwrap() {
+                blocks.push(json!({
+                    "type": "tool_use",
+                    "id": call.id,
+                    "name": call.name,
+                    "input": call.arguments,
+                }));
+            }
+            turns.push(json!({"role": "assistant", "content": blocks}));
+            continue;
+        }
+        turns.push(json!({"role": m.role, "content": m.content}));
+    }
+    if !pending_tool_results.is_empty() {
+        turns.push(json!({"role": "user", "content": pending_tool_results}));
+    }
+    turns
+}
+
+fn apply_tools(payload: &mut Value, options: Option<&AdapterCallOptions>) {
+    let Some(options) = options.filter(|o| !o.tools.is_empty()) else { return };
+    let tools: Vec<Value> = options
+        .tools
+        .iter()
+        .map(|t| {
+            json!({
+                "name": t.name,
+                "description": t.description,
+                "input_schema": t.parameters.clone()
+                    .unwrap_or_else(|| json!({"type": "object", "properties": {}})),
+            })
+        })
+        .collect();
+    payload["tools"] = json!(tools);
+    if let Some(choice) = &options.tool_choice {
+        payload["tool_choice"] = match choice {
+            ToolChoice::Auto => json!({"type": "auto"}),
+            ToolChoice::None => json!({"type": "none"}),
+            ToolChoice::Required => json!({"type": "any"}),
+            ToolChoice::Tool { name } => json!({"type": "tool", "name": name}),
+        };
+    }
+}
+
+fn parse_tool_use_blocks(content: &[AnthropicContent]) -> Option<Vec<ToolCall>> {
+    let mut calls = vec![];
+    for (i, block) in content.iter().enumerate() {
+        if block.kind != "tool_use" {
+            continue;
+        }
+        let Some(name) = &block.name else { continue };
+        let arguments = match &block.input {
+            Some(Value::Object(map)) => map.clone(),
+            _ => serde_json::Map::new(),
+        };
+        calls.push(ToolCall {
+            id: block.id.clone().unwrap_or_else(|| format!("call_{i}")),
+            name: name.clone(),
+            arguments,
+        });
+    }
+    if calls.is_empty() { None } else { Some(calls) }
+}
+
 fn build_payload(
     messages: &[Message],
     config: &PriestConfig,
     output_spec: &OutputSpec,
+    options: Option<&AdapterCallOptions>,
     stream: bool,
 ) -> (Value, Option<String>) {
     let mut system_parts: Vec<String> = messages
@@ -85,11 +182,7 @@ fn build_payload(
             "Respond with a valid JSON object that conforms to the following JSON Schema:\n\n<schema>\n{schema_str}\n</schema>\n\nReturn only the JSON object — no explanation, no markdown fences."
         ));
     }
-    let turns: Vec<Value> = messages
-        .iter()
-        .filter(|m| m.role != "system")
-        .map(|m| json!({"role": m.role, "content": m.content}))
-        .collect();
+    let turns = build_wire_turns(messages);
     let system_str: Option<String> = if system_parts.is_empty() {
         None
     } else {
@@ -97,6 +190,7 @@ fn build_payload(
     };
     let max_tokens = config.max_output_tokens.unwrap_or(8096);
     let mut payload = json!({ "model": config.model, "messages": turns, "max_tokens": max_tokens });
+    apply_tools(&mut payload, options);
     if stream {
         payload["stream"] = json!(true);
     }
@@ -123,9 +217,10 @@ impl ProviderAdapter for AnthropicProvider {
         messages: &[Message],
         config: &PriestConfig,
         output_spec: &OutputSpec,
+        options: Option<&AdapterCallOptions>,
     ) -> Result<AdapterResult, PriestError> {
         let url = format!("{}/v1/messages", self.base_url);
-        let (payload, _) = build_payload(messages, config, output_spec, false);
+        let (payload, _) = build_payload(messages, config, output_spec, options, false);
         let timeout = Duration::from_secs_f64(config.timeout_seconds);
 
         let resp = self
@@ -163,6 +258,7 @@ impl ProviderAdapter for AnthropicProvider {
             .json()
             .await
             .map_err(|e| provider_error(config, e.to_string()))?;
+        let tool_calls = parse_tool_use_blocks(&data.content);
         let text = data
             .content
             .into_iter()
@@ -172,9 +268,14 @@ impl ProviderAdapter for AnthropicProvider {
 
         Ok(AdapterResult {
             text,
-            finish_reason: map_stop(data.stop_reason.as_deref()),
+            finish_reason: if tool_calls.is_some() {
+                Some("tool_calls".to_string())
+            } else {
+                map_stop(data.stop_reason.as_deref())
+            },
             input_tokens: data.usage.as_ref().and_then(|u| u.input_tokens),
             output_tokens: data.usage.as_ref().and_then(|u| u.output_tokens),
+            tool_calls,
         })
     }
 
@@ -183,9 +284,10 @@ impl ProviderAdapter for AnthropicProvider {
         messages: &[Message],
         config: &PriestConfig,
         output_spec: &OutputSpec,
+        options: Option<&AdapterCallOptions>,
     ) -> Result<BoxStream<'static, Result<String, PriestError>>, PriestError> {
         let url = format!("{}/v1/messages", self.base_url);
-        let (payload, _) = build_payload(messages, config, output_spec, true);
+        let (payload, _) = build_payload(messages, config, output_spec, options, true);
         let timeout = Duration::from_secs_f64(config.timeout_seconds);
         let provider = config.provider.clone();
 

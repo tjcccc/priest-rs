@@ -7,7 +7,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::time::Duration;
 
-use super::adapter::{AdapterResult, ProviderAdapter};
+use super::adapter::{AdapterCallOptions, AdapterResult, ProviderAdapter};
+use crate::schema::tools::{parse_tool_arguments, ToolCall, ToolChoice};
 use crate::context_builder::Message;
 use crate::errors::PriestError;
 use crate::schema::config::PriestConfig;
@@ -44,6 +45,8 @@ struct OAIChoice {
 #[derive(Deserialize)]
 struct OAIMessage {
     content: Option<String>,
+    #[serde(default)]
+    tool_calls: Option<Vec<Value>>,
 }
 
 #[derive(Deserialize)]
@@ -57,24 +60,107 @@ fn map_finish(r: Option<&str>) -> Option<String> {
         match r? {
             "stop" => "stop",
             "length" => "length",
-            "content_filter" => "unknown",
+            "content_filter" => "content_filter",
+            "tool_calls" => "tool_calls",
             _ => "unknown",
         }
         .to_string(),
     )
 }
 
+fn build_wire_messages(messages: &[Message]) -> Vec<Value> {
+    messages
+        .iter()
+        .map(|m| {
+            if m.role == "tool" {
+                json!({"role": "tool", "tool_call_id": m.tool_call_id, "content": m.content})
+            } else if m.role == "assistant" && m.tool_calls.as_ref().is_some_and(|c| !c.is_empty()) {
+                let calls: Vec<Value> = m
+                    .tool_calls
+                    .as_ref()
+                    .unwrap()
+                    .iter()
+                    .map(|c| {
+                        json!({
+                            "id": c.id,
+                            "type": "function",
+                            "function": {
+                                "name": c.name,
+                                "arguments": serde_json::to_string(&c.arguments).unwrap_or_else(|_| "{}".into()),
+                            }
+                        })
+                    })
+                    .collect();
+                let content = if m.content.is_empty() { Value::Null } else { json!(m.content) };
+                json!({"role": "assistant", "content": content, "tool_calls": calls})
+            } else {
+                json!({"role": m.role, "content": m.content})
+            }
+        })
+        .collect()
+}
+
+fn apply_tools(payload: &mut Value, options: Option<&AdapterCallOptions>) {
+    let Some(options) = options.filter(|o| !o.tools.is_empty()) else { return };
+    let tools: Vec<Value> = options
+        .tools
+        .iter()
+        .map(|t| {
+            json!({
+                "type": "function",
+                "function": {
+                    "name": t.name,
+                    "description": t.description,
+                    "parameters": t.parameters.clone().unwrap_or_else(|| json!({})),
+                }
+            })
+        })
+        .collect();
+    payload["tools"] = json!(tools);
+    if let Some(choice) = &options.tool_choice {
+        payload["tool_choice"] = match choice {
+            ToolChoice::Auto => json!("auto"),
+            ToolChoice::None => json!("none"),
+            ToolChoice::Required => json!("required"),
+            ToolChoice::Tool { name } => json!({"type": "function", "function": {"name": name}}),
+        };
+    }
+}
+
+/// Parse non-streaming wire tool calls. Unparseable argument JSON becomes {}.
+fn parse_wire_tool_calls(raw: Option<&Vec<Value>>) -> Option<Vec<ToolCall>> {
+    let raw = raw?;
+    let mut calls = vec![];
+    for (i, item) in raw.iter().enumerate() {
+        let Some(name) = item.pointer("/function/name").and_then(Value::as_str) else { continue };
+        let arguments = item
+            .pointer("/function/arguments")
+            .and_then(Value::as_str)
+            .map(parse_tool_arguments)
+            .unwrap_or_default();
+        calls.push(ToolCall {
+            id: item
+                .get("id")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("call_{i}")),
+            name: name.to_string(),
+            arguments,
+        });
+    }
+    if calls.is_empty() { None } else { Some(calls) }
+}
+
 fn build_payload(
     messages: &[Message],
     config: &PriestConfig,
     output_spec: &OutputSpec,
+    options: Option<&AdapterCallOptions>,
     stream: bool,
 ) -> Value {
-    let msgs: Vec<Value> = messages
-        .iter()
-        .map(|m| json!({"role": m.role, "content": m.content}))
-        .collect();
+    let msgs = build_wire_messages(messages);
     let mut payload = json!({ "model": config.model, "messages": msgs });
+    apply_tools(&mut payload, options);
     if stream {
         payload["stream"] = json!(true);
     }
@@ -113,9 +199,10 @@ impl ProviderAdapter for OpenAICompatProvider {
         messages: &[Message],
         config: &PriestConfig,
         output_spec: &OutputSpec,
+        options: Option<&AdapterCallOptions>,
     ) -> Result<AdapterResult, PriestError> {
         let url = format!("{}/v1/chat/completions", self.base_url);
-        let payload = build_payload(messages, config, output_spec, false);
+        let payload = build_payload(messages, config, output_spec, options, false);
         let timeout = Duration::from_secs_f64(config.timeout_seconds);
 
         let resp = self
@@ -161,11 +248,17 @@ impl ProviderAdapter for OpenAICompatProvider {
             .into_iter()
             .next()
             .ok_or_else(|| provider_error(config, "empty choices"))?;
+        let tool_calls = parse_wire_tool_calls(choice.message.tool_calls.as_ref());
         Ok(AdapterResult {
             text: choice.message.content.unwrap_or_default(),
-            finish_reason: map_finish(choice.finish_reason.as_deref()),
+            finish_reason: if tool_calls.is_some() {
+                Some("tool_calls".to_string())
+            } else {
+                map_finish(choice.finish_reason.as_deref())
+            },
             input_tokens: data.usage.as_ref().and_then(|u| u.prompt_tokens),
             output_tokens: data.usage.as_ref().and_then(|u| u.completion_tokens),
+            tool_calls,
         })
     }
 
@@ -174,9 +267,10 @@ impl ProviderAdapter for OpenAICompatProvider {
         messages: &[Message],
         config: &PriestConfig,
         output_spec: &OutputSpec,
+        options: Option<&AdapterCallOptions>,
     ) -> Result<BoxStream<'static, Result<String, PriestError>>, PriestError> {
         let url = format!("{}/v1/chat/completions", self.base_url);
-        let payload = build_payload(messages, config, output_spec, true);
+        let payload = build_payload(messages, config, output_spec, options, true);
         let timeout = Duration::from_secs_f64(config.timeout_seconds);
         let provider = config.provider.clone();
 

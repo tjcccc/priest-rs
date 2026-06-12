@@ -32,6 +32,12 @@ pub enum PriestError {
     #[error("request invalid: {message}")]
     RequestInvalid { message: String },
 
+    #[error("request aborted: {provider}")]
+    RequestAborted { provider: String },
+
+    #[error("image load error: {path} — {reason}")]
+    ImageLoadError { path: String, reason: String },
+
     #[error("internal error: {message}")]
     InternalError { message: String },
 }
@@ -48,6 +54,8 @@ impl PriestError {
             Self::ProviderError { .. } => "PROVIDER_ERROR",
             Self::ProviderRateLimited { .. } => "PROVIDER_RATE_LIMITED",
             Self::RequestInvalid { .. } => "REQUEST_INVALID",
+            Self::RequestAborted { .. } => "REQUEST_ABORTED",
+            Self::ImageLoadError { .. } => "IMAGE_LOAD_ERROR",
             Self::InternalError { .. } => "INTERNAL_ERROR",
         }
     }

@@ -6,6 +6,11 @@ use std::collections::HashMap;
 pub struct PriestResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// Tool calls requested by the model (spec 2.4.0). Present exactly when
+    /// `execution.finished_reason` is "tool_calls". The caller executes them
+    /// and re-runs with the results appended to `request.tool_exchange`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<crate::schema::tools::ToolCall>>,
     pub execution: ExecutionInfo,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<UsageInfo>,

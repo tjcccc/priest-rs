@@ -1,4 +1,5 @@
 use super::config::PriestConfig;
+use super::tools::{ToolChoice, ToolDefinition, ToolExchangeTurn};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -23,6 +24,16 @@ pub struct PriestRequest {
     pub output: OutputSpec,
     #[serde(default)]
     pub metadata: HashMap<String, Value>,
+    /// Tools the model may call. The caller executes them; the library transports.
+    #[serde(default)]
+    pub tools: Vec<ToolDefinition>,
+    /// Tool selection behavior. Only meaningful when tools is non-empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<ToolChoice>,
+    /// Tool loop history for the CURRENT user turn, appended after the user
+    /// message. Never persisted in sessions. See spec behavior/tool-calling.md.
+    #[serde(default)]
+    pub tool_exchange: Vec<ToolExchangeTurn>,
 }
 
 fn default_profile() -> String {
@@ -42,6 +53,9 @@ impl PriestRequest {
             images: vec![],
             output: OutputSpec::default(),
             metadata: HashMap::new(),
+            tools: vec![],
+            tool_choice: None,
+            tool_exchange: vec![],
         }
     }
 }

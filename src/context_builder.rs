@@ -1,5 +1,6 @@
 use crate::profile::model::Profile;
 use crate::schema::request::PriestRequest;
+use crate::schema::tools::{ToolCall, ToolExchangeTurn};
 use crate::session::model::Session;
 
 pub const FORMAT_INSTRUCTION_JSON: &str =
@@ -9,10 +10,16 @@ pub const FORMAT_INSTRUCTION_XML: &str =
 pub const FORMAT_INSTRUCTION_CODE: &str =
     "Respond only with code. No prose, no markdown code fences around it.";
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Message {
     pub role: String,
     pub content: String,
+    /// Tool calls made by the model. Assistant role only (spec 2.4.0).
+    pub tool_calls: Option<Vec<ToolCall>>,
+    /// Id of the tool call this message answers. Tool role only.
+    pub tool_call_id: Option<String>,
+    /// Tool name. Tool role only.
+    pub name: Option<String>,
 }
 
 impl Message {
@@ -20,18 +27,21 @@ impl Message {
         Self {
             role: "system".into(),
             content: content.into(),
+            ..Default::default()
         }
     }
     pub fn user(content: impl Into<String>) -> Self {
         Self {
             role: "user".into(),
             content: content.into(),
+            ..Default::default()
         }
     }
     pub fn assistant(content: impl Into<String>) -> Self {
         Self {
             role: "assistant".into(),
             content: content.into(),
+            ..Default::default()
         }
     }
 }
@@ -105,6 +115,7 @@ pub fn build_messages(
             messages.push(Message {
                 role: turn.role.clone(),
                 content: turn.content.clone(),
+                ..Default::default()
             });
         }
     }
@@ -116,6 +127,30 @@ pub fn build_messages(
         }
     }
     messages.push(Message::user(user_parts.join("\n\n")));
+
+    // Tool loop history for the current turn (spec 2.4.0). Appended after the
+    // user message, never persisted in sessions.
+    for turn in &request.tool_exchange {
+        match turn {
+            ToolExchangeTurn::Assistant { text, tool_calls } => {
+                messages.push(Message {
+                    role: "assistant".into(),
+                    content: text.clone().unwrap_or_default(),
+                    tool_calls: Some(tool_calls.clone()),
+                    ..Default::default()
+                });
+            }
+            ToolExchangeTurn::ToolResult { tool_call_id, name, content, .. } => {
+                messages.push(Message {
+                    role: "tool".into(),
+                    content: content.clone(),
+                    tool_call_id: Some(tool_call_id.clone()),
+                    name: Some(name.clone()),
+                    ..Default::default()
+                });
+            }
+        }
+    }
 
     messages
 }

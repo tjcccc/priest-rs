@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use futures::stream::BoxStream;
 use priest::context_builder::Message;
 use priest::errors::PriestError;
-use priest::providers::adapter::{AdapterResult, ProviderAdapter};
+use priest::providers::adapter::{AdapterCallOptions, AdapterResult, ProviderAdapter};
 use priest::schema::config::PriestConfig;
 use priest::schema::request::OutputSpec;
 
@@ -34,6 +34,7 @@ impl ProviderAdapter for MockAdapter {
         _messages: &[Message],
         config: &PriestConfig,
         _output_spec: &OutputSpec,
+        _options: Option<&AdapterCallOptions>,
     ) -> Result<AdapterResult, PriestError> {
         if let Some(ref e) = self.error {
             return Err(PriestError::ProviderError {
@@ -46,6 +47,7 @@ impl ProviderAdapter for MockAdapter {
             finish_reason: Some("stop".into()),
             input_tokens: Some(10),
             output_tokens: Some(5),
+            tool_calls: None,
         })
     }
 
@@ -54,6 +56,7 @@ impl ProviderAdapter for MockAdapter {
         _messages: &[Message],
         _config: &PriestConfig,
         _output_spec: &OutputSpec,
+        _options: Option<&AdapterCallOptions>,
     ) -> Result<BoxStream<'static, Result<String, PriestError>>, PriestError> {
         if let Some(ref e) = self.error {
             let msg = e.to_string();

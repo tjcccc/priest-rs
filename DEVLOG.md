@@ -1,5 +1,20 @@
 # DEVLOG
 
+## 2026-06-12 — v2.4.0 — tool calling, structured streaming (spec 2.4.0 sync)
+
+Syncs the spec 2.4.0 features (reference: priest-typescript / Python priest-core 2.4.0).
+
+- **Tool calling (caller executes):** `PriestRequest.tools` / `tool_choice` / `tool_exchange`, `PriestResponse.tool_calls`, `finished_reason: "tool_calls"`. Wire mappings for all three providers (OpenAI tools with JSON-string arguments, Anthropic tool_use/tool_result with merged user messages, Ollama tools with synthesized `call_N` ids and `tool_name` results). Tool exchange turns are never persisted in sessions.
+- **`run_with_tools()` + `ToolExecutor` trait** (`src/tool_loop.rs`): generic call → execute → re-call loop with a default-approve `approve` hook, iteration cap, and exchange trace.
+- **`PriestEngine::stream_events()`:** structured event stream ending in `Done` with the full `PriestResponse`. Like the existing `stream()`, the provider stream is collected before emission; native streaming tool-call deltas are not yet surfaced in this SDK — use `run()` / `run_with_tools()` for tool calling.
+- **Cancellation:** Rust maps the spec's cancellation concept to dropping the future/stream; `REQUEST_ABORTED` and `IMAGE_LOAD_ERROR` error variants added for code-table parity.
+- `AdapterCallOptions` added to the adapter trait (breaking for third-party adapters; all known implementers are in-house).
+- `SPEC_VERSION` → "2.4.0". Tests: 6 new in `tests/tool_calling.rs`.
+
+Known gaps: multimodal image building (spec 2.0) and true incremental streaming remain unimplemented in this SDK.
+
+---
+
 ## 2026-05-08 — v2.3.0 — optional profile memory loading
 
 - Added `FilesystemProfileLoader::with_include_memories(root, false)` so host apps can load profile identity/rules/custom files without injecting `memories/`

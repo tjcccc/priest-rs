@@ -7,7 +7,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::time::Duration;
 
-use super::adapter::{AdapterResult, ProviderAdapter};
+use super::adapter::{AdapterCallOptions, AdapterResult, ProviderAdapter};
+use crate::schema::tools::ToolCall;
 use crate::context_builder::Message;
 use crate::errors::PriestError;
 use crate::schema::config::PriestConfig;
@@ -44,6 +45,8 @@ struct OllamaResponse {
 #[derive(Deserialize)]
 struct OllamaMessage {
     content: String,
+    #[serde(default)]
+    tool_calls: Option<Vec<Value>>,
 }
 
 fn map_done_reason(r: Option<&str>) -> Option<String> {
@@ -57,17 +60,80 @@ fn map_done_reason(r: Option<&str>) -> Option<String> {
     )
 }
 
+fn build_wire_messages(messages: &[Message]) -> Vec<Value> {
+    messages
+        .iter()
+        .map(|m| {
+            if m.role == "tool" {
+                // Ollama correlates tool results by tool_name, not call id.
+                json!({"role": "tool", "content": m.content, "tool_name": m.name})
+            } else if m.role == "assistant" && m.tool_calls.as_ref().is_some_and(|c| !c.is_empty()) {
+                // Synthesized call ids are dropped on the wire.
+                let calls: Vec<Value> = m
+                    .tool_calls
+                    .as_ref()
+                    .unwrap()
+                    .iter()
+                    .map(|c| json!({"function": {"name": c.name, "arguments": c.arguments}}))
+                    .collect();
+                json!({"role": "assistant", "content": m.content, "tool_calls": calls})
+            } else {
+                json!({"role": m.role, "content": m.content})
+            }
+        })
+        .collect()
+}
+
+fn apply_tools(payload: &mut Value, options: Option<&AdapterCallOptions>) {
+    // Ollama accepts OpenAI-shaped tools; it has no tool_choice parameter.
+    let Some(options) = options.filter(|o| !o.tools.is_empty()) else { return };
+    let tools: Vec<Value> = options
+        .tools
+        .iter()
+        .map(|t| {
+            json!({
+                "type": "function",
+                "function": {
+                    "name": t.name,
+                    "description": t.description,
+                    "parameters": t.parameters.clone().unwrap_or_else(|| json!({})),
+                }
+            })
+        })
+        .collect();
+    payload["tools"] = json!(tools);
+}
+
+/// Parse Ollama wire tool calls, synthesizing ids "call_N" in order.
+fn parse_wire_tool_calls(raw: Option<&Vec<Value>>) -> Option<Vec<ToolCall>> {
+    let raw = raw?;
+    let mut calls = vec![];
+    for item in raw {
+        let function = item.get("function")?;
+        let Some(name) = function.get("name").and_then(Value::as_str) else { continue };
+        let arguments = match function.get("arguments") {
+            Some(Value::Object(map)) => map.clone(),
+            _ => serde_json::Map::new(),
+        };
+        calls.push(ToolCall {
+            id: format!("call_{}", calls.len()),
+            name: name.to_string(),
+            arguments,
+        });
+    }
+    if calls.is_empty() { None } else { Some(calls) }
+}
+
 fn build_payload(
     messages: &[Message],
     config: &PriestConfig,
     output_spec: &OutputSpec,
+    options: Option<&AdapterCallOptions>,
     stream: bool,
 ) -> Value {
-    let msgs: Vec<Value> = messages
-        .iter()
-        .map(|m| json!({"role": m.role, "content": m.content}))
-        .collect();
+    let msgs = build_wire_messages(messages);
     let mut payload = json!({ "model": config.model, "messages": msgs, "stream": stream });
+    apply_tools(&mut payload, options);
     if let Some(max_tokens) = config.max_output_tokens {
         payload["options"] = json!({ "num_predict": max_tokens });
     }
@@ -96,9 +162,10 @@ impl ProviderAdapter for OllamaProvider {
         messages: &[Message],
         config: &PriestConfig,
         output_spec: &OutputSpec,
+        options: Option<&AdapterCallOptions>,
     ) -> Result<AdapterResult, PriestError> {
         let url = format!("{}/api/chat", self.base_url);
-        let payload = build_payload(messages, config, output_spec, false);
+        let payload = build_payload(messages, config, output_spec, options, false);
         let timeout = Duration::from_secs_f64(config.timeout_seconds);
 
         let resp = self
@@ -133,11 +200,17 @@ impl ProviderAdapter for OllamaProvider {
             .json()
             .await
             .map_err(|e| provider_error(config, e.to_string()))?;
+        let tool_calls = parse_wire_tool_calls(data.message.tool_calls.as_ref());
         Ok(AdapterResult {
             text: data.message.content,
-            finish_reason: map_done_reason(data.done_reason.as_deref()),
+            finish_reason: if tool_calls.is_some() {
+                Some("tool_calls".to_string())
+            } else {
+                map_done_reason(data.done_reason.as_deref())
+            },
             input_tokens: data.prompt_eval_count,
             output_tokens: data.eval_count,
+            tool_calls,
         })
     }
 
@@ -146,9 +219,10 @@ impl ProviderAdapter for OllamaProvider {
         messages: &[Message],
         config: &PriestConfig,
         output_spec: &OutputSpec,
+        options: Option<&AdapterCallOptions>,
     ) -> Result<BoxStream<'static, Result<String, PriestError>>, PriestError> {
         let url = format!("{}/api/chat", self.base_url);
-        let payload = build_payload(messages, config, output_spec, true);
+        let payload = build_payload(messages, config, output_spec, options, true);
         let timeout = Duration::from_secs_f64(config.timeout_seconds);
         let provider = config.provider.clone();
 
