@@ -12,6 +12,8 @@ pub struct AdapterResult {
     pub finish_reason: Option<String>,
     pub input_tokens: Option<u32>,
     pub output_tokens: Option<u32>,
+    /// Prompt-cache hit count (spec 2.5.0). None when the provider omits it.
+    pub cached_input_tokens: Option<u32>,
     /// Tool calls requested by the model (spec 2.4.0). None when there are none.
     pub tool_calls: Option<Vec<ToolCall>>,
 }

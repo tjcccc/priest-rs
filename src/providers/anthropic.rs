@@ -62,6 +62,8 @@ struct AnthropicContent {
 struct AnthropicUsage {
     input_tokens: Option<u32>,
     output_tokens: Option<u32>,
+    #[serde(default)]
+    cache_read_input_tokens: Option<u32>,
 }
 
 fn map_stop(r: Option<&str>) -> Option<String> {
@@ -275,6 +277,7 @@ impl ProviderAdapter for AnthropicProvider {
             },
             input_tokens: data.usage.as_ref().and_then(|u| u.input_tokens),
             output_tokens: data.usage.as_ref().and_then(|u| u.output_tokens),
+            cached_input_tokens: data.usage.as_ref().and_then(|u| u.cache_read_input_tokens),
             tool_calls,
         })
     }
@@ -356,5 +359,29 @@ impl ProviderAdapter for AnthropicProvider {
         });
 
         Ok(Box::pin(stream))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_cache_read_input_tokens() {
+        // spec 2.5.0: usage.cache_read_input_tokens → cached_input_tokens.
+        let resp: AnthropicResponse = serde_json::from_value(json!({
+            "content": [{ "type": "text", "text": "ok" }],
+            "stop_reason": "end_turn",
+            "usage": { "input_tokens": 1200, "output_tokens": 40, "cache_read_input_tokens": 1024 }
+        })).unwrap();
+        assert_eq!(resp.usage.as_ref().and_then(|u| u.cache_read_input_tokens), Some(1024));
+
+        // None when omitted.
+        let resp2: AnthropicResponse = serde_json::from_value(json!({
+            "content": [{ "type": "text", "text": "ok" }],
+            "stop_reason": "end_turn",
+            "usage": { "input_tokens": 1200, "output_tokens": 40 }
+        })).unwrap();
+        assert_eq!(resp2.usage.unwrap().cache_read_input_tokens, None);
     }
 }

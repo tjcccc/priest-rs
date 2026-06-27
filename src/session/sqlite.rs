@@ -69,9 +69,11 @@ impl SessionStore for SqliteSessionStore {
             .optional()
             .map_err(|e| PriestError::SessionStoreError { message: e.to_string() })?;
 
-        let Some((sid, profile_name, created_at_s, updated_at_s, _meta)) = row else {
+        let Some((sid, profile_name, created_at_s, updated_at_s, meta_s)) = row else {
             return Ok(None);
         };
+        // Round-trip session metadata (incl. the __compaction state, spec 2.5.0).
+        let metadata = serde_json::from_str(&meta_s).unwrap_or_default();
 
         let mut stmt = conn
             .prepare(
@@ -106,7 +108,7 @@ impl SessionStore for SqliteSessionStore {
             created_at: Self::parse_ts(&created_at_s),
             updated_at: Self::parse_ts(&updated_at_s),
             turns,
-            metadata: Default::default(),
+            metadata,
         }))
     }
 
@@ -131,9 +133,10 @@ impl SessionStore for SqliteSessionStore {
 
     async fn save(&self, session: &Session) -> Result<(), PriestError> {
         let conn = self.conn.lock().unwrap();
+        let metadata_json = serde_json::to_string(&session.metadata).unwrap_or_else(|_| "{}".into());
         conn.execute(
-            "UPDATE sessions SET updated_at = ?1, metadata = '{}' WHERE id = ?2",
-            params![Session::format_timestamp(&session.updated_at), session.id],
+            "UPDATE sessions SET updated_at = ?1, metadata = ?2 WHERE id = ?3",
+            params![Session::format_timestamp(&session.updated_at), metadata_json, session.id],
         )
         .map_err(|e| PriestError::SessionStoreError {
             message: e.to_string(),

@@ -5,11 +5,16 @@ use std::time::Instant;
 use futures::stream::BoxStream;
 use futures::StreamExt;
 
+use crate::compactor::{
+    build_summary_messages, plan_compaction, should_compact, DEFAULT_COMPACTION_KEEP_TURNS,
+    SUMMARY_MAX_OUTPUT_TOKENS,
+};
 use crate::context_builder::build_messages;
 use crate::errors::PriestError;
 use crate::profile::loader::ProfileLoader;
 use crate::providers::adapter::{AdapterCallOptions, ProviderAdapter};
-use crate::schema::request::PriestRequest;
+use crate::schema::config::PriestConfig;
+use crate::schema::request::{OutputSpec, PriestRequest};
 use crate::schema::tools::ToolCall;
 use crate::schema::response::{
     ExecutionInfo, PriestErrorModel, PriestResponse, SessionInfo, UsageInfo,
@@ -17,7 +22,7 @@ use crate::schema::response::{
 use crate::session::model::Session;
 use crate::session::store::SessionStore;
 
-pub const SPEC_VERSION: &str = "2.4.0";
+pub const SPEC_VERSION: &str = "2.6.1";
 
 /// Engine-level structured streaming event (spec 2.4.0). The terminal event
 /// is always `Done` carrying the full `PriestResponse`.
@@ -79,7 +84,12 @@ impl PriestEngine {
         })?;
 
         let profile = self.profile_loader.load(&request.profile)?;
-        let (session, is_new) = self.resolve_session(&request).await?;
+        let (mut session, is_new) = self.resolve_session(&request).await?;
+
+        // Compaction (spec 2.5.0): fold older turns before building messages.
+        if let Some(sess) = session.as_mut() {
+            self.maybe_compact(sess, &request.config).await?;
+        }
 
         let messages = build_messages(&request, &profile, session.as_ref());
 
@@ -119,6 +129,7 @@ impl PriestEngine {
                     usage: Some(UsageInfo::new(
                         adapter_result.input_tokens,
                         adapter_result.output_tokens,
+                        adapter_result.cached_input_tokens,
                     )),
                     session: None,
                     error: None,
@@ -131,6 +142,11 @@ impl PriestEngine {
                     if tool_calls.is_none() {
                         sess.append_turn("user", &request.prompt);
                         sess.append_turn("assistant", &adapter_result.text);
+                        // Record the trigger signal for clean chat turns only
+                        // (tool-exchange replays carry inflated input).
+                        if request.tool_exchange.is_empty() {
+                            sess.record_input_tokens(adapter_result.input_tokens);
+                        }
                         store.save(&sess).await?;
                     }
                     resp.session = Some(SessionInfo {
@@ -168,7 +184,11 @@ impl PriestEngine {
         })?;
 
         let profile = self.profile_loader.load(&request.profile)?;
-        let (session, _is_new) = self.resolve_session(&request).await?;
+        let (mut session, _is_new) = self.resolve_session(&request).await?;
+
+        if let Some(sess) = session.as_mut() {
+            self.maybe_compact(sess, &request.config).await?;
+        }
 
         let messages = build_messages(&request, &profile, session.as_ref());
 
@@ -216,7 +236,10 @@ impl PriestEngine {
         })?;
 
         let profile = self.profile_loader.load(&request.profile)?;
-        let (session, is_new) = self.resolve_session(&request).await?;
+        let (mut session, is_new) = self.resolve_session(&request).await?;
+        if let Some(sess) = session.as_mut() {
+            self.maybe_compact(sess, &request.config).await?;
+        }
         let messages = build_messages(&request, &profile, session.as_ref());
 
         let mut chunks: Vec<String> = vec![];
@@ -286,6 +309,81 @@ impl PriestEngine {
             .chain(std::iter::once(PriestStreamEvent::Done { response }))
             .collect();
         Ok(Box::pin(futures::stream::iter(events)))
+    }
+
+    /// Compact a session on demand: fold older turns into the running summary,
+    /// keeping the most recent `compaction_keep_turns` (spec 2.5.0). Returns
+    /// `(compacted, summarized_through)`. Errors `SessionNotFound` for unknown ids.
+    pub async fn compact_session(
+        &self,
+        session_id: &str,
+        config: &PriestConfig,
+    ) -> Result<(bool, usize), PriestError> {
+        let Some(store) = &self.session_store else {
+            return Ok((false, 0));
+        };
+        let mut session = store.get(session_id).await?.ok_or_else(|| {
+            PriestError::SessionNotFound {
+                session_id: session_id.to_string(),
+            }
+        })?;
+        let compacted = self.compact(&mut session, config).await?;
+        Ok((compacted, session.get_compaction().summarized_through))
+    }
+
+    /// Compact before a turn when the previous turn's input usage crossed the budget.
+    async fn maybe_compact(
+        &self,
+        session: &mut Session,
+        config: &PriestConfig,
+    ) -> Result<(), PriestError> {
+        if self.session_store.is_none() {
+            return Ok(());
+        }
+        if !should_compact(session.get_compaction().last_input_tokens, config.max_context_tokens) {
+            return Ok(());
+        }
+        self.compact(session, config).await?;
+        Ok(())
+    }
+
+    /// Fold turns into the summary via a provider summarization call; persists the result.
+    async fn compact(
+        &self,
+        session: &mut Session,
+        config: &PriestConfig,
+    ) -> Result<bool, PriestError> {
+        let Some(store) = &self.session_store else {
+            return Ok(false);
+        };
+        let keep_turns = config.compaction_keep_turns.unwrap_or(DEFAULT_COMPACTION_KEEP_TURNS);
+        let existing = session.get_compaction();
+        let Some(plan) = plan_compaction(&session.turns, existing.summarized_through, keep_turns) else {
+            return Ok(false);
+        };
+
+        let adapter = self.adapters.get(&config.provider).ok_or_else(|| {
+            PriestError::ProviderNotRegistered {
+                provider: config.provider.clone(),
+            }
+        })?;
+
+        let messages = build_summary_messages(existing.summary.as_deref(), &plan.to_summarize);
+        let mut summary_config = config.clone();
+        if summary_config.max_output_tokens.is_none() {
+            summary_config.max_output_tokens = Some(SUMMARY_MAX_OUTPUT_TOKENS);
+        }
+        let result = adapter
+            .complete(&messages, &summary_config, &OutputSpec::default(), None)
+            .await?;
+        let summary = result.text.trim().to_string();
+        if summary.is_empty() {
+            return Ok(false);
+        }
+
+        session.apply_compaction(summary, plan.summarized_through);
+        store.save(session).await?;
+        Ok(true)
     }
 
     async fn resolve_session(

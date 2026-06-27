@@ -15,15 +15,7 @@ use priest::tool_loop::{run_with_tools, ApprovalDecision, ToolExecutionResult, T
 use priest::{InMemorySessionStore, PriestEngine, PriestError, Profile};
 
 fn config() -> PriestConfig {
-    PriestConfig {
-        provider: "mock".into(),
-        model: "test-model".into(),
-        timeout_seconds: 60.0,
-        max_output_tokens: None,
-        cost_limit: None,
-        max_system_chars: None,
-        provider_options: std::collections::HashMap::new(),
-    }
+    PriestConfig::new("mock", "test-model")
 }
 
 fn read_file_call() -> ToolCall {
@@ -69,6 +61,7 @@ fn scripted(text: &str, finish: &str, tool_calls: Option<Vec<ToolCall>>) -> Adap
         finish_reason: Some(finish.into()),
         input_tokens: None,
         output_tokens: None,
+        cached_input_tokens: None,
         tool_calls,
     }
 }

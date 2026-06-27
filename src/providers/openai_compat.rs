@@ -53,6 +53,14 @@ struct OAIMessage {
 struct OAIUsage {
     prompt_tokens: Option<u32>,
     completion_tokens: Option<u32>,
+    #[serde(default)]
+    prompt_tokens_details: Option<OAIPromptTokensDetails>,
+}
+
+#[derive(Deserialize)]
+struct OAIPromptTokensDetails {
+    #[serde(default)]
+    cached_tokens: Option<u32>,
 }
 
 fn map_finish(r: Option<&str>) -> Option<String> {
@@ -163,6 +171,11 @@ fn build_payload(
     apply_tools(&mut payload, options);
     if stream {
         payload["stream"] = json!(true);
+        // Streaming usage is opt-in: without this, OpenAI-compatible gateways
+        // (e.g. DashScope) emit a usage chunk only for models that volunteer it,
+        // so cost/context goes missing for the rest. `provider_options` below can
+        // still override it.
+        payload["stream_options"] = json!({ "include_usage": true });
     }
     if let Some(max_t) = config.max_output_tokens {
         payload["max_tokens"] = json!(max_t);
@@ -258,6 +271,11 @@ impl ProviderAdapter for OpenAICompatProvider {
             },
             input_tokens: data.usage.as_ref().and_then(|u| u.prompt_tokens),
             output_tokens: data.usage.as_ref().and_then(|u| u.completion_tokens),
+            cached_input_tokens: data
+                .usage
+                .as_ref()
+                .and_then(|u| u.prompt_tokens_details.as_ref())
+                .and_then(|d| d.cached_tokens),
             tool_calls,
         })
     }
@@ -338,5 +356,58 @@ impl ProviderAdapter for OpenAICompatProvider {
         });
 
         Ok(Box::pin(stream))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cfg() -> PriestConfig {
+        PriestConfig::new("test", "test-model")
+    }
+
+    #[test]
+    fn streaming_requests_usage_and_non_streaming_omits_it() {
+        let msgs = [Message::user("go")];
+        let spec = OutputSpec::default();
+
+        let streaming = build_payload(&msgs, &cfg(), &spec, None, true);
+        assert_eq!(streaming["stream"], json!(true));
+        assert_eq!(streaming["stream_options"], json!({ "include_usage": true }));
+
+        let non_streaming = build_payload(&msgs, &cfg(), &spec, None, false);
+        assert!(non_streaming.get("stream_options").is_none());
+    }
+
+    #[test]
+    fn provider_options_override_stream_options() {
+        let mut config = cfg();
+        config.provider_options.insert(
+            "stream_options".to_string(),
+            json!({ "include_usage": false }),
+        );
+        let payload = build_payload(&[Message::user("go")], &config, &OutputSpec::default(), None, true);
+        assert_eq!(payload["stream_options"], json!({ "include_usage": false }));
+    }
+
+    #[test]
+    fn parses_cached_tokens_from_prompt_tokens_details() {
+        // spec 2.5.0: usage.prompt_tokens_details.cached_tokens → cached_input_tokens.
+        let with_cache: OAIResponse = serde_json::from_value(json!({
+            "choices": [{ "message": { "content": "ok" }, "finish_reason": "stop" }],
+            "usage": { "prompt_tokens": 1200, "completion_tokens": 40, "prompt_tokens_details": { "cached_tokens": 1024 } }
+        })).unwrap();
+        let cached = with_cache.usage.as_ref()
+            .and_then(|u| u.prompt_tokens_details.as_ref())
+            .and_then(|d| d.cached_tokens);
+        assert_eq!(cached, Some(1024));
+
+        // None when the provider omits the detail.
+        let without: OAIResponse = serde_json::from_value(json!({
+            "choices": [{ "message": { "content": "ok" }, "finish_reason": "stop" }],
+            "usage": { "prompt_tokens": 1200, "completion_tokens": 40 }
+        })).unwrap();
+        assert!(without.usage.unwrap().prompt_tokens_details.is_none());
     }
 }

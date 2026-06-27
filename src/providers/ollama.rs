@@ -210,6 +210,7 @@ impl ProviderAdapter for OllamaProvider {
             },
             input_tokens: data.prompt_eval_count,
             output_tokens: data.eval_count,
+            cached_input_tokens: None,
             tool_calls,
         })
     }

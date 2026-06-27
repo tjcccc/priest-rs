@@ -53,6 +53,12 @@ pub fn build_messages(
 ) -> Vec<Message> {
     let max_system_chars = request.config.max_system_chars;
 
+    // Compaction summary (spec 2.5.0): when the session has been compacted, the
+    // summary stands in for the folded-away leading turns, which are skipped below.
+    let compaction = session.map(|s| s.get_compaction());
+    let conversation_summary = compaction.as_ref().and_then(|c| c.summary.clone());
+    let summarized_through = compaction.as_ref().map(|c| c.summarized_through).unwrap_or(0);
+
     // Step 1 — normalize profile memories
     let profile_memories: Vec<String> = profile
         .memories
@@ -86,7 +92,7 @@ pub fn build_messages(
     let (dynamic_memory, profile_memories) = if let Some(budget) = max_system_chars {
         let mut dyn_m = dynamic_memory;
         let mut prof_m = profile_memories;
-        while assemble_system_content(request, profile, &prof_m, &dyn_m).len() > budget {
+        while assemble_system_content(request, profile, &prof_m, &dyn_m, conversation_summary.as_deref()).len() > budget {
             if !dyn_m.is_empty() {
                 dyn_m.pop();
             } else if !prof_m.is_empty() {
@@ -101,7 +107,7 @@ pub fn build_messages(
     };
 
     let system_content =
-        assemble_system_content(request, profile, &profile_memories, &dynamic_memory);
+        assemble_system_content(request, profile, &profile_memories, &dynamic_memory, conversation_summary.as_deref());
 
     // Step 5 — build message list
     let mut messages: Vec<Message> = vec![];
@@ -111,7 +117,21 @@ pub fn build_messages(
     }
 
     if let Some(sess) = session {
-        for turn in &sess.turns {
+        // Replay window (spec 2.5.0 + 2.6.0). Skip turns folded into the summary;
+        // optionally cap to the last N turns (session_context_turns).
+        let mut window_start = summarized_through;
+        if let Some(n) = request.config.session_context_turns {
+            window_start = summarized_through.max(sess.turns.len().saturating_sub(n));
+            // Snap down to a user turn so an odd-sized window never opens the replay
+            // on an orphan assistant reply. Floored by summarized_through.
+            while window_start > summarized_through
+                && window_start < sess.turns.len()
+                && sess.turns[window_start].role != "user"
+            {
+                window_start -= 1;
+            }
+        }
+        for turn in &sess.turns[window_start..] {
             messages.push(Message {
                 role: turn.role.clone(),
                 content: turn.content.clone(),
@@ -160,6 +180,7 @@ fn assemble_system_content(
     profile: &Profile,
     profile_memories: &[String],
     dynamic_memory: &[String],
+    conversation_summary: Option<&str>,
 ) -> String {
     let mut parts: Vec<String> = vec![];
 
@@ -190,6 +211,14 @@ fn assemble_system_content(
 
     if !dynamic_memory.is_empty() {
         parts.push(format!("## Memory\n\n{}", dynamic_memory.join("\n")));
+    }
+
+    // Compaction summary (spec 2.5.0): after memory, before the format instruction.
+    if let Some(summary) = conversation_summary {
+        let trimmed = summary.trim();
+        if !trimmed.is_empty() {
+            parts.push(format!("## Conversation so far (summary)\n\n{trimmed}"));
+        }
     }
 
     if let Some(ref fmt) = request.output.prompt_format {

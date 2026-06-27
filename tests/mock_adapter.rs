@@ -47,6 +47,7 @@ impl ProviderAdapter for MockAdapter {
             finish_reason: Some("stop".into()),
             input_tokens: Some(10),
             output_tokens: Some(5),
+            cached_input_tokens: None,
             tool_calls: None,
         })
     }

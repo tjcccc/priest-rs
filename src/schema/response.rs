@@ -47,12 +47,15 @@ pub struct UsageInfo {
     pub output_tokens: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub total_tokens: Option<u32>,
+    /// Prompt-cache hit count (spec 2.5.0). None when the provider omits it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cached_input_tokens: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub estimated_cost_usd: Option<f64>,
 }
 
 impl UsageInfo {
-    pub fn new(input: Option<u32>, output: Option<u32>) -> Self {
+    pub fn new(input: Option<u32>, output: Option<u32>, cached: Option<u32>) -> Self {
         let total = match (input, output) {
             (Some(i), Some(o)) => Some(i + o),
             _ => None,
@@ -61,6 +64,7 @@ impl UsageInfo {
             input_tokens: input,
             output_tokens: output,
             total_tokens: total,
+            cached_input_tokens: cached,
             estimated_cost_usd: None,
         }
     }
