@@ -19,13 +19,18 @@ pub use profile::{
     loader::ProfileLoader, model::Profile,
 };
 pub use providers::{
-    adapter::{AdapterCallOptions, AdapterResult, ProviderAdapter},
+    adapter::{AdapterCallOptions, AdapterResult, AdapterStreamEvent, ProviderAdapter},
     anthropic::AnthropicProvider,
     ollama::OllamaProvider,
     openai_compat::OpenAICompatProvider,
+    openai_responses::OpenAIResponsesProvider,
 };
 pub use schema::{
     config::PriestConfig,
+    reasoning::{
+        OpaqueReasoningState, ReasoningConfig, ReasoningEffort, ReasoningInfo,
+        ReasoningSummaryMode,
+    },
     request::{ImageInput, OutputSpec, PriestRequest, SessionRef},
     tools::{parse_tool_arguments, ToolCall, ToolChoice, ToolDefinition, ToolExchangeTurn},
     response::{ExecutionInfo, PriestErrorModel, PriestResponse, SessionInfo, UsageInfo},

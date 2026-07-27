@@ -276,7 +276,9 @@ impl ProviderAdapter for OpenAICompatProvider {
                 .as_ref()
                 .and_then(|u| u.prompt_tokens_details.as_ref())
                 .and_then(|d| d.cached_tokens),
+            reasoning_tokens: None,
             tool_calls,
+            reasoning: None,
         })
     }
 

@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+use super::reasoning::ReasoningInfo;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PriestResponse {
@@ -11,6 +12,9 @@ pub struct PriestResponse {
     /// and re-runs with the results appended to `request.tool_exchange`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<crate::schema::tools::ToolCall>>,
+    /// Provider-supplied summary and request-local opaque continuation state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<ReasoningInfo>,
     pub execution: ExecutionInfo,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<UsageInfo>,
@@ -50,21 +54,35 @@ pub struct UsageInfo {
     /// Prompt-cache hit count (spec 2.5.0). None when the provider omits it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cached_input_tokens: Option<u32>,
+    /// Provider-reported reasoning tokens. A subset of output_tokens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_tokens: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub estimated_cost_usd: Option<f64>,
 }
 
 impl UsageInfo {
     pub fn new(input: Option<u32>, output: Option<u32>, cached: Option<u32>) -> Self {
-        let total = match (input, output) {
-            (Some(i), Some(o)) => Some(i + o),
-            _ => None,
+        Self::with_reasoning(input, output, cached, None)
+    }
+
+    pub fn with_reasoning(
+        input: Option<u32>,
+        output: Option<u32>,
+        cached: Option<u32>,
+        reasoning: Option<u32>,
+    ) -> Self {
+        let total = if input.is_some() || output.is_some() {
+            Some(input.unwrap_or(0) + output.unwrap_or(0))
+        } else {
+            None
         };
         Self {
             input_tokens: input,
             output_tokens: output,
             total_tokens: total,
             cached_input_tokens: cached,
+            reasoning_tokens: reasoning,
             estimated_cost_usd: None,
         }
     }

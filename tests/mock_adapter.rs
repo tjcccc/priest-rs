@@ -48,7 +48,9 @@ impl ProviderAdapter for MockAdapter {
             input_tokens: Some(10),
             output_tokens: Some(5),
             cached_input_tokens: None,
+            reasoning_tokens: None,
             tool_calls: None,
+            reasoning: None,
         })
     }
 

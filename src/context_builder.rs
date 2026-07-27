@@ -1,6 +1,7 @@
 use crate::profile::model::Profile;
 use crate::schema::request::PriestRequest;
 use crate::schema::tools::{ToolCall, ToolExchangeTurn};
+use crate::schema::reasoning::ReasoningInfo;
 use crate::session::model::Session;
 
 pub const FORMAT_INSTRUCTION_JSON: &str =
@@ -20,6 +21,8 @@ pub struct Message {
     pub tool_call_id: Option<String>,
     /// Tool name. Tool role only.
     pub name: Option<String>,
+    /// Safe reasoning state on assistant tool-call turns (spec 2.8.0).
+    pub reasoning: Option<ReasoningInfo>,
 }
 
 impl Message {
@@ -152,11 +155,12 @@ pub fn build_messages(
     // user message, never persisted in sessions.
     for turn in &request.tool_exchange {
         match turn {
-            ToolExchangeTurn::Assistant { text, tool_calls } => {
+            ToolExchangeTurn::Assistant { text, tool_calls, reasoning } => {
                 messages.push(Message {
                     role: "assistant".into(),
                     content: text.clone().unwrap_or_default(),
                     tool_calls: Some(tool_calls.clone()),
+                    reasoning: reasoning.clone(),
                     ..Default::default()
                 });
             }

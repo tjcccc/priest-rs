@@ -1,5 +1,15 @@
 # DEVLOG
 
+## 2026-07-27 — v2.8.0 — OpenAI Responses and provider-neutral reasoning
+
+Synced the TypeScript reference and canonical protocol 2.8.0 behavior without changing the bundled SQLite schema, timestamps, session persistence, or the existing OpenAI-compatible Chat Completions adapter.
+
+- Added `OpenAIResponsesProvider` with configurable base/exact URL, headers, and `reqwest::Client`; stateless tool continuation; JSON output formats; function tools; semantic SSE parsing; normalized finish/errors; and duplicate tool-terminal suppression.
+- Added provider-neutral reasoning config, safe summaries, opaque request-local continuation, `ReasoningSummaryDelta`, reasoning-token usage, and `content_filter`.
+- Mapped neutral reasoning to OpenAI Responses, Anthropic, and Ollama. Raw Ollama traces and raw Responses reasoning content are not surfaced. `run_with_tools()` carries recognized opaque state; durable sessions remain text-only.
+- Extended adapter and engine structured events for reasoning/tool/usage data. The Rust engine retains its pre-existing buffered streaming model, but parses Responses SSE correctly across transport chunks and LF/CRLF frames.
+- Added focused provider, safety, usage, streaming, engine, and tool-loop tests. `cargo test --all-targets`: 89 passed. The pre-existing multimodal message-building gap remains; `PriestRequest.images` is not yet wired into providers.
+
 ## 2026-06-27 — v2.6.1 — full spec sync (compaction, turn window, cached tokens, streaming usage)
 
 Brings priest-rs to full parity with the spec at v2.6.1 (2.5.0 → 2.6.0 → 2.6.1) on the `run()` / `complete` path, mirroring the priest-core/priest-typescript reference. All additions are off/opt-in by default; the SQLite schema is unchanged, so pre-2.5 sessions remain interoperable.

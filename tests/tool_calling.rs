@@ -62,7 +62,9 @@ fn scripted(text: &str, finish: &str, tool_calls: Option<Vec<ToolCall>>) -> Adap
         input_tokens: None,
         output_tokens: None,
         cached_input_tokens: None,
+        reasoning_tokens: None,
         tool_calls,
+        reasoning: None,
     }
 }
 
@@ -119,7 +121,11 @@ async fn tool_calls_surface_with_finished_reason() {
 fn tool_exchange_replayed_after_user_message() {
     let mut req = request();
     req.tool_exchange = vec![
-        ToolExchangeTurn::Assistant { text: Some(String::new()), tool_calls: vec![read_file_call()] },
+        ToolExchangeTurn::Assistant {
+            text: Some(String::new()),
+            tool_calls: vec![read_file_call()],
+            reasoning: None,
+        },
         ToolExchangeTurn::ToolResult {
             tool_call_id: "call_0".into(),
             name: "read_file".into(),
@@ -154,7 +160,11 @@ async fn session_not_persisted_while_tool_calls_pending() {
     assert!(priest::SessionStore::get(store.as_ref(), "s1").await.unwrap().unwrap().turns.is_empty());
 
     req.tool_exchange = vec![
-        ToolExchangeTurn::Assistant { text: None, tool_calls: first.tool_calls.unwrap() },
+        ToolExchangeTurn::Assistant {
+            text: None,
+            tool_calls: first.tool_calls.unwrap(),
+            reasoning: None,
+        },
         ToolExchangeTurn::ToolResult {
             tool_call_id: "call_0".into(),
             name: "read_file".into(),

@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use super::reasoning::ReasoningInfo;
 
 /// A tool the model may call.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -49,6 +50,8 @@ pub enum ToolExchangeTurn {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         text: Option<String>,
         tool_calls: Vec<ToolCall>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reasoning: Option<ReasoningInfo>,
     },
     ToolResult {
         tool_call_id: String,

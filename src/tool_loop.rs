@@ -75,6 +75,7 @@ pub async fn run_with_tools(
         exchange.push(ToolExchangeTurn::Assistant {
             text: current.text.clone(),
             tool_calls: calls.clone(),
+            reasoning: current.reasoning.clone(),
         });
         for call in &calls {
             let decision = executor.approve(call).await;

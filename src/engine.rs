@@ -12,7 +12,7 @@ use crate::compactor::{
 use crate::context_builder::build_messages;
 use crate::errors::PriestError;
 use crate::profile::loader::ProfileLoader;
-use crate::providers::adapter::{AdapterCallOptions, ProviderAdapter};
+use crate::providers::adapter::{AdapterCallOptions, AdapterStreamEvent, ProviderAdapter};
 use crate::schema::config::PriestConfig;
 use crate::schema::request::{OutputSpec, PriestRequest};
 use crate::schema::tools::ToolCall;
@@ -22,7 +22,7 @@ use crate::schema::response::{
 use crate::session::model::Session;
 use crate::session::store::SessionStore;
 
-pub const SPEC_VERSION: &str = "2.6.1";
+pub const SPEC_VERSION: &str = "2.8.0";
 
 /// Engine-level structured streaming event (spec 2.4.0). The terminal event
 /// is always `Done` carrying the full `PriestResponse`.
@@ -31,12 +31,14 @@ pub const SPEC_VERSION: &str = "2.6.1";
 /// streaming, so tool-call variants are reserved; use `run()` /
 /// `run_with_tools()` for tool calling.
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)] // Keep the established unboxed Done response API.
 pub enum PriestStreamEvent {
     TextDelta { text: String },
+    ReasoningSummaryDelta { text: String },
     ToolCallStart { index: usize, id: Option<String>, name: Option<String> },
     ToolCallDelta { index: usize, arguments_delta: String },
     ToolCallEnd { index: usize, tool_call: ToolCall },
-    Usage { input_tokens: Option<u32>, output_tokens: Option<u32> },
+    Usage { usage: UsageInfo },
     Done { response: PriestResponse },
 }
 
@@ -119,18 +121,26 @@ impl PriestEngine {
                 } else {
                     adapter_result.finish_reason.clone()
                 };
+                let has_usage = adapter_result.input_tokens.is_some()
+                    || adapter_result.output_tokens.is_some()
+                    || adapter_result.cached_input_tokens.is_some()
+                    || adapter_result.reasoning_tokens.is_some();
                 let mut resp = PriestResponse {
                     text: Some(adapter_result.text.clone()),
                     tool_calls: tool_calls.clone(),
+                    reasoning: adapter_result.reasoning.clone(),
                     execution: ExecutionInfo {
                         finished_reason,
                         ..execution
                     },
-                    usage: Some(UsageInfo::new(
-                        adapter_result.input_tokens,
-                        adapter_result.output_tokens,
-                        adapter_result.cached_input_tokens,
-                    )),
+                    usage: has_usage.then(|| {
+                        UsageInfo::with_reasoning(
+                            adapter_result.input_tokens,
+                            adapter_result.output_tokens,
+                            adapter_result.cached_input_tokens,
+                            adapter_result.reasoning_tokens,
+                        )
+                    }),
                     session: None,
                     error: None,
                     metadata: request.metadata.clone(),
@@ -161,6 +171,7 @@ impl PriestEngine {
             Err(e) => Ok(PriestResponse {
                 text: None,
                 tool_calls: None,
+                reasoning: None,
                 execution: ExecutionInfo {
                     finished_reason: Some("error".into()),
                     ..execution
@@ -243,16 +254,55 @@ impl PriestEngine {
         let messages = build_messages(&request, &profile, session.as_ref());
 
         let mut chunks: Vec<String> = vec![];
+        let mut tool_calls: Vec<ToolCall> = vec![];
+        let mut adapter_events: Vec<AdapterStreamEvent> = vec![];
+        let mut finish_reason: Option<String> = None;
+        let mut reasoning = None;
+        let mut usage = None;
         let mut error: Option<PriestError> = None;
         match adapter
-            .stream(&messages, &request.config, &request.output, call_options(&request).as_ref())
+            .stream_events(
+                &messages,
+                &request.config,
+                &request.output,
+                call_options(&request).as_ref(),
+            )
             .await
         {
-            Ok(chunk_stream) => {
-                let collected = chunk_stream.collect::<Vec<_>>().await;
+            Ok(event_stream) => {
+                let collected = event_stream.collect::<Vec<_>>().await;
                 for item in collected {
                     match item {
-                        Ok(chunk) => chunks.push(chunk),
+                        Ok(event) => {
+                            match &event {
+                                AdapterStreamEvent::TextDelta { text } => chunks.push(text.clone()),
+                                AdapterStreamEvent::ToolCallEnd { tool_call, .. } => {
+                                    tool_calls.push(tool_call.clone())
+                                }
+                                AdapterStreamEvent::Usage {
+                                    input_tokens,
+                                    output_tokens,
+                                    cached_input_tokens,
+                                    reasoning_tokens,
+                                } => {
+                                    usage = Some(UsageInfo::with_reasoning(
+                                        *input_tokens,
+                                        *output_tokens,
+                                        *cached_input_tokens,
+                                        *reasoning_tokens,
+                                    ));
+                                }
+                                AdapterStreamEvent::Finish {
+                                    finish_reason: event_finish,
+                                    reasoning: event_reasoning,
+                                } => {
+                                    finish_reason = event_finish.clone().or(finish_reason);
+                                    reasoning = event_reasoning.clone().or(reasoning);
+                                }
+                                _ => {}
+                            }
+                            adapter_events.push(event);
+                        }
                         Err(e) => {
                             error = Some(e);
                             break;
@@ -264,19 +314,30 @@ impl PriestEngine {
         }
 
         let text = if chunks.is_empty() { None } else { Some(chunks.join("")) };
+        if !tool_calls.is_empty() && error.is_none() {
+            finish_reason = Some("tool_calls".into());
+        }
         let mut session_info = None;
         if let (Some(sess), Some(store)) = (session, &self.session_store) {
             if error.is_none() {
-                if let Some(ref full_text) = text {
-                    let mut s = sess.clone();
-                    s.append_turn("user", &request.prompt);
-                    s.append_turn("assistant", full_text);
-                    let _ = store.save(&s).await;
-                    session_info = Some(SessionInfo {
-                        id: s.id.clone(),
-                        is_new,
-                        turn_count: s.turns.len(),
-                    });
+                if tool_calls.is_empty() {
+                    if let Some(ref full_text) = text {
+                        let mut s = sess.clone();
+                        s.append_turn("user", &request.prompt);
+                        s.append_turn("assistant", full_text);
+                        let _ = store.save(&s).await;
+                        session_info = Some(SessionInfo {
+                            id: s.id.clone(),
+                            is_new,
+                            turn_count: s.turns.len(),
+                        });
+                    } else {
+                        session_info = Some(SessionInfo {
+                            id: sess.id.clone(),
+                            is_new,
+                            turn_count: sess.turns.len(),
+                        });
+                    }
                 } else {
                     session_info = Some(SessionInfo {
                         id: sess.id.clone(),
@@ -289,25 +350,60 @@ impl PriestEngine {
 
         let response = PriestResponse {
             text,
-            tool_calls: None,
+            tool_calls: if tool_calls.is_empty() { None } else { Some(tool_calls) },
+            reasoning,
             execution: ExecutionInfo {
                 provider: request.config.provider.clone(),
                 model: request.config.model.clone(),
                 profile: request.profile.clone(),
                 latency_ms: Some(start.elapsed().as_millis() as i64),
-                finished_reason: Some(if error.is_some() { "error".into() } else { "stop".to_string() }),
+                finished_reason: Some(if error.is_some() {
+                    "error".into()
+                } else {
+                    finish_reason.unwrap_or_else(|| "stop".into())
+                }),
             },
-            usage: None,
+            usage,
             session: session_info,
             error: error.as_ref().map(PriestErrorModel::from_priest_error),
             metadata: request.metadata.clone(),
         };
 
-        let events: Vec<PriestStreamEvent> = chunks
+        let mut events: Vec<PriestStreamEvent> = adapter_events
             .into_iter()
-            .map(|text| PriestStreamEvent::TextDelta { text })
-            .chain(std::iter::once(PriestStreamEvent::Done { response }))
+            .filter_map(|event| match event {
+                AdapterStreamEvent::TextDelta { text } => {
+                    Some(PriestStreamEvent::TextDelta { text })
+                }
+                AdapterStreamEvent::ReasoningSummaryDelta { text } => {
+                    Some(PriestStreamEvent::ReasoningSummaryDelta { text })
+                }
+                AdapterStreamEvent::ToolCallStart { index, id, name } => {
+                    Some(PriestStreamEvent::ToolCallStart { index, id, name })
+                }
+                AdapterStreamEvent::ToolCallDelta { index, arguments_delta } => {
+                    Some(PriestStreamEvent::ToolCallDelta { index, arguments_delta })
+                }
+                AdapterStreamEvent::ToolCallEnd { index, tool_call } => {
+                    Some(PriestStreamEvent::ToolCallEnd { index, tool_call })
+                }
+                AdapterStreamEvent::Usage {
+                    input_tokens,
+                    output_tokens,
+                    cached_input_tokens,
+                    reasoning_tokens,
+                } => Some(PriestStreamEvent::Usage {
+                    usage: UsageInfo::with_reasoning(
+                        input_tokens,
+                        output_tokens,
+                        cached_input_tokens,
+                        reasoning_tokens,
+                    ),
+                }),
+                AdapterStreamEvent::Finish { .. } => None,
+            })
             .collect();
+        events.push(PriestStreamEvent::Done { response });
         Ok(Box::pin(futures::stream::iter(events)))
     }
 

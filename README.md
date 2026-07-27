@@ -8,7 +8,7 @@ Rust 2021 · async/await (tokio) · Zero system dependencies
 
 ## Overview
 
-`priest` is a Rust crate that implements the priest protocol spec v2.6.1 natively — no Python server, no FFI. It is designed for Rust services, CLI tools, and any async Rust host that needs to talk to a local or remote AI provider.
+`priest` is a Rust crate that implements the priest protocol spec v2.8.0 natively — no Python server, no FFI. It is designed for Rust services, CLI tools, and any async Rust host that needs to talk to a local or remote AI provider.
 
 The core API is two methods on `PriestEngine`:
 
@@ -23,7 +23,7 @@ The core API is two methods on `PriestEngine`:
 
 ```toml
 [dependencies]
-priest = "2.6.1"
+priest = "2.8.0"
 tokio  = { version = "1", features = ["full"] }
 ```
 
@@ -75,13 +75,14 @@ stream.for_each(|chunk| async move {
 }).await;
 ```
 
-### Anthropic or OpenAI-compatible providers
+### Anthropic, OpenAI Responses, or OpenAI-compatible providers
 
 ```rust
-use priest::{AnthropicProvider, OpenAICompatProvider};
+use priest::{AnthropicProvider, OpenAICompatProvider, OpenAIResponsesProvider};
 
 let engine = PriestEngine::new(loader)
     .register("anthropic", Box::new(AnthropicProvider::new("sk-ant-...")))
+    .register("responses", Box::new(OpenAIResponsesProvider::new("sk-...")))
     .register("openai",    Box::new(OpenAICompatProvider::new("https://api.openai.com", "sk-...")));
 
 let request = PriestRequest {
@@ -221,6 +222,27 @@ req.output = OutputSpec {
 
 ---
 
+## Reasoning
+
+Protocol v2.8 adds provider-neutral reasoning controls and safe, provider-supplied summaries:
+
+```rust
+use priest::{ReasoningConfig, ReasoningEffort, ReasoningSummaryMode};
+
+config.reasoning = Some(ReasoningConfig {
+    enabled: Some(true),
+    effort: Some(ReasoningEffort::Medium),
+    summary: Some(ReasoningSummaryMode::Auto),
+});
+
+let response = engine.run(PriestRequest::new(config, "Solve this.")).await?;
+println!("{:?}", response.reasoning.and_then(|value| value.summary));
+```
+
+`stream_events()` surfaces `ReasoningSummaryDelta`; plain `stream()` yields answer text only. `run_with_tools()` copies opaque continuation state between tool iterations, and durable sessions remain text-only. Priest never exposes private chain-of-thought. `usage.reasoning_tokens` is a subset of output tokens and is not added twice to `total_tokens`.
+
+---
+
 ## Error Handling
 
 Two errors are always returned as `Err(...)` from `run()`/`stream()` and are never captured into `response.error`:
@@ -258,6 +280,7 @@ match engine.run(request).await {
 |-----|------|-------|
 | any | `OllamaProvider` | NDJSON streaming; default base URL `http://localhost:11434` |
 | any | `AnthropicProvider` | SSE streaming; requires API key |
+| any | `OpenAIResponsesProvider` | First-class Responses API; reasoning and stateless tool continuation |
 | any | `OpenAICompatProvider` | SSE streaming; works with any OpenAI-compatible endpoint |
 
 Provider keys are arbitrary strings — the key you pass to `.register()` must match the `provider` field in `PriestConfig`.
@@ -312,10 +335,10 @@ let engine = PriestEngine::new(loader)
 
 ## Spec
 
-`priest` targets priest protocol spec **v2.6.1**. The spec lives in the [`priest`](https://github.com/tjcccc/priest) repository under `spec/`. It defines the canonical context assembly algorithm, session schema, timestamp format, and error codes that all priest SDKs must implement identically.
+`priest` targets priest protocol spec **v2.8.0**. The spec lives in the [`priest`](https://github.com/tjcccc/priest) repository under `spec/`. It defines the canonical context assembly algorithm, session schema, timestamp format, and error codes that all priest SDKs must implement identically.
 
 ```rust
-priest::SPEC_VERSION  // "2.6.1"
+priest::SPEC_VERSION  // "2.8.0"
 ```
 
 ---

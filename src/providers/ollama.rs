@@ -13,6 +13,7 @@ use crate::context_builder::Message;
 use crate::errors::PriestError;
 use crate::schema::config::PriestConfig;
 use crate::schema::request::OutputSpec;
+use crate::schema::reasoning::ReasoningEffort;
 
 pub struct OllamaProvider {
     base_url: String,
@@ -124,19 +125,45 @@ fn parse_wire_tool_calls(raw: Option<&Vec<Value>>) -> Option<Vec<ToolCall>> {
     if calls.is_empty() { None } else { Some(calls) }
 }
 
+fn apply_reasoning(payload: &mut Value, config: &PriestConfig) -> Result<(), PriestError> {
+    let Some(reasoning) = &config.reasoning else {
+        return Ok(());
+    };
+    if reasoning.enabled == Some(false) || reasoning.effort == Some(ReasoningEffort::None) {
+        payload["think"] = json!(false);
+        return Ok(());
+    }
+    if matches!(
+        reasoning.effort,
+        Some(ReasoningEffort::Minimal | ReasoningEffort::XHigh)
+    ) {
+        let effort = reasoning.effort.unwrap().as_str();
+        return Err(PriestError::RequestInvalid {
+            message: format!("Ollama does not define the reasoning effort '{effort}'"),
+        });
+    }
+    if let Some(effort) = reasoning.effort {
+        payload["think"] = json!(effort.as_str());
+    } else if reasoning.enabled == Some(true) {
+        payload["think"] = json!(true);
+    }
+    Ok(())
+}
+
 fn build_payload(
     messages: &[Message],
     config: &PriestConfig,
     output_spec: &OutputSpec,
     options: Option<&AdapterCallOptions>,
     stream: bool,
-) -> Value {
+) -> Result<Value, PriestError> {
     let msgs = build_wire_messages(messages);
     let mut payload = json!({ "model": config.model, "messages": msgs, "stream": stream });
     apply_tools(&mut payload, options);
     if let Some(max_tokens) = config.max_output_tokens {
         payload["options"] = json!({ "num_predict": max_tokens });
     }
+    apply_reasoning(&mut payload, config)?;
     if let Some(ref schema) = output_spec.json_schema {
         payload["format"] = schema.clone();
     } else if output_spec.provider_format.as_deref() == Some("json") {
@@ -145,7 +172,7 @@ fn build_payload(
     for (k, v) in &config.provider_options {
         payload[k] = v.clone();
     }
-    payload
+    Ok(payload)
 }
 
 fn provider_error(config: &PriestConfig, msg: impl Into<String>) -> PriestError {
@@ -165,7 +192,7 @@ impl ProviderAdapter for OllamaProvider {
         options: Option<&AdapterCallOptions>,
     ) -> Result<AdapterResult, PriestError> {
         let url = format!("{}/api/chat", self.base_url);
-        let payload = build_payload(messages, config, output_spec, options, false);
+        let payload = build_payload(messages, config, output_spec, options, false)?;
         let timeout = Duration::from_secs_f64(config.timeout_seconds);
 
         let resp = self
@@ -211,7 +238,9 @@ impl ProviderAdapter for OllamaProvider {
             input_tokens: data.prompt_eval_count,
             output_tokens: data.eval_count,
             cached_input_tokens: None,
+            reasoning_tokens: None,
             tool_calls,
+            reasoning: None,
         })
     }
 
@@ -223,7 +252,7 @@ impl ProviderAdapter for OllamaProvider {
         options: Option<&AdapterCallOptions>,
     ) -> Result<BoxStream<'static, Result<String, PriestError>>, PriestError> {
         let url = format!("{}/api/chat", self.base_url);
-        let payload = build_payload(messages, config, output_spec, options, true);
+        let payload = build_payload(messages, config, output_spec, options, true)?;
         let timeout = Duration::from_secs_f64(config.timeout_seconds);
         let provider = config.provider.clone();
 
@@ -284,5 +313,50 @@ impl ProviderAdapter for OllamaProvider {
         });
 
         Ok(Box::pin(stream))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::schema::reasoning::{ReasoningConfig, ReasoningEffort};
+
+    #[test]
+    fn neutral_reasoning_maps_and_provider_options_override() {
+        let mut config = PriestConfig::new("ollama", "qwen");
+        config.reasoning = Some(ReasoningConfig {
+            enabled: None,
+            effort: Some(ReasoningEffort::High),
+            summary: None,
+        });
+        config.provider_options.insert("think".into(), json!(false));
+        let payload = build_payload(
+            &[Message::user("Hi")],
+            &config,
+            &OutputSpec::default(),
+            None,
+            false,
+        )
+        .unwrap();
+        assert_eq!(payload["think"], false);
+    }
+
+    #[test]
+    fn rejects_undefined_effort() {
+        let mut config = PriestConfig::new("ollama", "qwen");
+        config.reasoning = Some(ReasoningConfig {
+            enabled: None,
+            effort: Some(ReasoningEffort::XHigh),
+            summary: None,
+        });
+        let error = build_payload(
+            &[Message::user("Hi")],
+            &config,
+            &OutputSpec::default(),
+            None,
+            false,
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), "REQUEST_INVALID");
     }
 }

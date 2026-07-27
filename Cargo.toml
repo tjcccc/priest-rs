@@ -1,8 +1,8 @@
 [package]
 name        = "priest"
-version     = "2.6.1"
+version     = "2.8.0"
 edition     = "2021"
-description = "Rust SDK for the priest protocol (spec v2.6.1)"
+description = "Rust SDK for the priest protocol (spec v2.8.0)"
 license     = "MIT"
 repository  = "https://github.com/tjcccc/priest-rs"
 homepage    = "https://github.com/tjcccc/priest-rs"

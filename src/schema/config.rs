@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+use super::reasoning::ReasoningConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PriestConfig {
@@ -26,6 +27,9 @@ pub struct PriestConfig {
     /// 0 replays none (summary only); None replays all (default).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_context_turns: Option<usize>,
+    /// Provider-neutral reasoning request. None preserves provider/model defaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<ReasoningConfig>,
     #[serde(default)]
     pub provider_options: HashMap<String, Value>,
 }
@@ -46,6 +50,7 @@ impl PriestConfig {
             max_context_tokens: None,
             compaction_keep_turns: None,
             session_context_turns: None,
+            reasoning: None,
             provider_options: HashMap::new(),
         }
     }

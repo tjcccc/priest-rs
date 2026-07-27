@@ -60,7 +60,9 @@ impl ProviderAdapter for ProgrammableAdapter {
             input_tokens: Some(if summary { 5 } else { self.input_tokens }),
             output_tokens: Some(5),
             cached_input_tokens: None,
+            reasoning_tokens: None,
             tool_calls: None,
+            reasoning: None,
         })
     }
 
