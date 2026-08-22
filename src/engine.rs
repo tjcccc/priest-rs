@@ -22,7 +22,7 @@ use crate::schema::response::{
 use crate::session::model::Session;
 use crate::session::store::SessionStore;
 
-pub const SPEC_VERSION: &str = "2.8.0";
+pub const SPEC_VERSION: &str = "2.8.1";
 
 /// Engine-level structured streaming event (spec 2.4.0). The terminal event
 /// is always `Done` carrying the full `PriestResponse`.

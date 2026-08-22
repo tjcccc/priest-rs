@@ -275,9 +275,14 @@ fn responses_input(messages: &[Message]) -> Vec<Value> {
             }
             continue;
         }
+        let text_type = if message.role == "assistant" {
+            "output_text"
+        } else {
+            "input_text"
+        };
         input.push(json!({
             "role": message.role,
-            "content": [{"type": "input_text", "text": message.content}],
+            "content": [{"type": text_type, "text": message.content}],
         }));
     }
     input
@@ -801,6 +806,38 @@ mod tests {
         assert_eq!(input[0]["type"], "reasoning");
         assert_eq!(input[1]["type"], "function_call");
         assert_eq!(input[2]["type"], "function_call_output");
+    }
+
+    #[test]
+    fn replays_assistant_history_as_output_text() {
+        let messages = vec![
+            Message {
+                role: "system".into(),
+                content: "Be concise.".into(),
+                ..Default::default()
+            },
+            Message {
+                role: "user".into(),
+                content: "First question.".into(),
+                ..Default::default()
+            },
+            Message {
+                role: "assistant".into(),
+                content: "First answer.".into(),
+                ..Default::default()
+            },
+            Message {
+                role: "user".into(),
+                content: "Second question.".into(),
+                ..Default::default()
+            },
+        ];
+
+        let input = responses_input(&messages);
+        assert_eq!(input[0]["content"][0]["type"], "input_text");
+        assert_eq!(input[1]["content"][0]["type"], "input_text");
+        assert_eq!(input[2]["content"][0]["type"], "output_text");
+        assert_eq!(input[3]["content"][0]["type"], "input_text");
     }
 
     #[test]

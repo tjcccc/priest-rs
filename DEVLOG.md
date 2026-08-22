@@ -1,5 +1,16 @@
 # DEVLOG
 
+## 2026-08-22 — v2.8.1 — OpenAI Responses assistant-history replay
+
+- Corrected Responses request serialization so prior assistant text uses
+  `output_text`; system and user messages continue to use `input_text`.
+- Added a focused regression and advanced the crate and declared protocol
+  version to `2.8.1`.
+- Session persistence, schemas, and the OpenAI-compatible adapter are unchanged.
+- Verification: the touched provider passes `rustfmt --check`,
+  `cargo test --all-targets` passes 90 tests, and `cargo package` verifies
+  the 2.8.1 crate.
+
 ## 2026-07-27 — v2.8.0 — OpenAI Responses and provider-neutral reasoning
 
 Synced the TypeScript reference and canonical protocol 2.8.0 behavior without changing the bundled SQLite schema, timestamps, session persistence, or the existing OpenAI-compatible Chat Completions adapter.
