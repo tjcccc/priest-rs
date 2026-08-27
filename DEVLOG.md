@@ -1,5 +1,17 @@
 # DEVLOG
 
+## 2026-08-27 — v2.9.0 — Provider-executed web search
+
+- Added `PriestRequest.provider_tools` and `ProviderToolDefinition::WebSearch`
+  separately from caller-executed function tools.
+- Added default-deny adapter capability checks and clear `PROVIDER_ERROR`
+  responses for unsupported provider/model combinations.
+- OpenAI Responses maps hosted web search before coexisting function tools;
+  provider tools never enter the caller tool loop.
+- Session persistence, compaction state, and SQLite interoperability are
+  unchanged; no migration is required.
+- Verification: all 91 tests pass, and `cargo build --release` succeeds.
+
 ## 2026-08-22 — v2.8.1 — OpenAI Responses assistant-history replay
 
 - Corrected Responses request serialization so prior assistant text uses

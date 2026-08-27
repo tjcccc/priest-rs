@@ -22,7 +22,7 @@ use crate::schema::response::{
 use crate::session::model::Session;
 use crate::session::store::SessionStore;
 
-pub const SPEC_VERSION: &str = "2.8.1";
+pub const SPEC_VERSION: &str = "2.9.0";
 
 /// Engine-level structured streaming event (spec 2.4.0). The terminal event
 /// is always `Done` carrying the full `PriestResponse`.
@@ -43,14 +43,29 @@ pub enum PriestStreamEvent {
 }
 
 fn call_options(request: &PriestRequest) -> Option<AdapterCallOptions> {
-    if request.tools.is_empty() {
+    if request.tools.is_empty() && request.provider_tools.is_empty() {
         None
     } else {
         Some(AdapterCallOptions {
             tools: request.tools.clone(),
+            provider_tools: request.provider_tools.clone(),
             tool_choice: request.tool_choice.clone(),
         })
     }
+}
+
+fn provider_tool_error(adapter: &dyn ProviderAdapter, request: &PriestRequest) -> Option<PriestError> {
+    request.provider_tools.iter().find_map(|tool| {
+        (!adapter.supports_provider_tool(tool, &request.config)).then(|| {
+            PriestError::ProviderError {
+                provider: request.config.provider.clone(),
+                message: format!(
+                    "Provider tool '{}' is not supported for model '{}'.",
+                    tool.as_str(), request.config.model,
+                ),
+            }
+        })
+    })
 }
 
 pub struct PriestEngine {
@@ -97,9 +112,13 @@ impl PriestEngine {
 
         let start = Instant::now();
         let options = call_options(&request);
-        let result = adapter
-            .complete(&messages, &request.config, &request.output, options.as_ref())
-            .await;
+        let result = if let Some(error) = provider_tool_error(adapter.as_ref(), &request) {
+            Err(error)
+        } else {
+            adapter
+                .complete(&messages, &request.config, &request.output, options.as_ref())
+                .await
+        };
         let latency_ms = start.elapsed().as_millis() as i64;
 
         let execution = ExecutionInfo {
@@ -203,6 +222,10 @@ impl PriestEngine {
 
         let messages = build_messages(&request, &profile, session.as_ref());
 
+        if let Some(error) = provider_tool_error(adapter.as_ref(), &request) {
+            return Err(error);
+        }
+
         let chunk_stream = adapter
             .stream(&messages, &request.config, &request.output, call_options(&request).as_ref())
             .await?;
@@ -260,15 +283,19 @@ impl PriestEngine {
         let mut reasoning = None;
         let mut usage = None;
         let mut error: Option<PriestError> = None;
-        match adapter
-            .stream_events(
-                &messages,
-                &request.config,
-                &request.output,
-                call_options(&request).as_ref(),
-            )
-            .await
-        {
+        let provider_stream = if let Some(error) = provider_tool_error(adapter.as_ref(), &request) {
+            Err(error)
+        } else {
+            adapter
+                .stream_events(
+                    &messages,
+                    &request.config,
+                    &request.output,
+                    call_options(&request).as_ref(),
+                )
+                .await
+        };
+        match provider_stream {
             Ok(event_stream) => {
                 let collected = event_stream.collect::<Vec<_>>().await;
                 for item in collected {

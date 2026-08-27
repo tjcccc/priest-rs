@@ -13,7 +13,7 @@ use crate::errors::PriestError;
 use crate::schema::config::PriestConfig;
 use crate::schema::reasoning::{OpaqueReasoningState, ReasoningInfo, ReasoningSummaryMode};
 use crate::schema::request::OutputSpec;
-use crate::schema::tools::{parse_tool_arguments, ToolCall, ToolChoice};
+use crate::schema::tools::{parse_tool_arguments, ProviderToolDefinition, ToolCall, ToolChoice};
 
 const DEFAULT_BASE_URL: &str = "https://api.openai.com";
 const REASONING_FORMAT: &str = "openai.responses.reasoning.v1";
@@ -98,6 +98,14 @@ impl Default for OpenAIResponsesProvider {
 
 #[async_trait]
 impl ProviderAdapter for OpenAIResponsesProvider {
+    fn supports_provider_tool(
+        &self,
+        tool: &ProviderToolDefinition,
+        _config: &PriestConfig,
+    ) -> bool {
+        matches!(tool, ProviderToolDefinition::WebSearch)
+    }
+
     async fn complete(
         &self,
         messages: &[Message],
@@ -202,28 +210,30 @@ fn build_payload(
     } else if output_spec.provider_format.as_deref() == Some("json") {
         payload["text"] = json!({"format": {"type": "json_object"}});
     }
-    if let Some(options) = options.filter(|options| !options.tools.is_empty()) {
-        payload["tools"] = Value::Array(
-            options
-                .tools
-                .iter()
-                .map(|tool| {
-                    json!({
-                        "type": "function",
-                        "name": tool.name,
-                        "description": tool.description,
-                        "parameters": tool.parameters.clone().unwrap_or_else(|| json!({})),
-                    })
-                })
-                .collect(),
-        );
-        if let Some(choice) = &options.tool_choice {
-            payload["tool_choice"] = match choice {
-                ToolChoice::Auto => json!("auto"),
-                ToolChoice::None => json!("none"),
-                ToolChoice::Required => json!("required"),
-                ToolChoice::Tool { name } => json!({"type": "function", "name": name}),
-            };
+    if let Some(options) = options {
+        let mut tools: Vec<Value> = options
+            .provider_tools
+            .iter()
+            .map(|tool| json!({"type": tool.as_str()}))
+            .collect();
+        tools.extend(options.tools.iter().map(|tool| {
+            json!({
+                "type": "function",
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.parameters.clone().unwrap_or_else(|| json!({})),
+            })
+        }));
+        if !tools.is_empty() {
+            payload["tools"] = Value::Array(tools);
+            if let Some(choice) = &options.tool_choice {
+                payload["tool_choice"] = match choice {
+                    ToolChoice::Auto => json!("auto"),
+                    ToolChoice::None => json!("none"),
+                    ToolChoice::Required => json!("required"),
+                    ToolChoice::Tool { name } => json!({"type": "function", "name": name}),
+                };
+            }
         }
     }
 
@@ -709,7 +719,7 @@ fn provider_error(message: impl Into<String>) -> PriestError {
 mod tests {
     use super::*;
     use crate::schema::reasoning::{ReasoningConfig, ReasoningEffort};
-    use crate::schema::tools::{ToolDefinition, ToolExchangeTurn};
+    use crate::schema::tools::{ProviderToolDefinition, ToolDefinition, ToolExchangeTurn};
 
     fn config() -> PriestConfig {
         PriestConfig::new("responses", "gpt-test")
@@ -741,6 +751,7 @@ mod tests {
                 description: "Look up a label.".into(),
                 parameters: Some(json!({"type": "object"})),
             }],
+            provider_tools: vec![ProviderToolDefinition::WebSearch],
             tool_choice: None,
         };
         let body = build_payload(
@@ -759,7 +770,8 @@ mod tests {
             json!({"effort":"medium","summary":"auto"})
         );
         assert_eq!(body["text"]["format"]["name"], "classification");
-        assert_eq!(body["tools"][0]["type"], "function");
+        assert_eq!(body["tools"][0], json!({"type": "web_search"}));
+        assert_eq!(body["tools"][1]["type"], "function");
     }
 
     #[test]

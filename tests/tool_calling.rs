@@ -10,7 +10,7 @@ use priest::context_builder::{build_messages, Message};
 use priest::providers::adapter::{AdapterCallOptions, AdapterResult, ProviderAdapter};
 use priest::schema::config::PriestConfig;
 use priest::schema::request::{OutputSpec, PriestRequest, SessionRef};
-use priest::schema::tools::{ToolCall, ToolDefinition, ToolExchangeTurn};
+use priest::schema::tools::{ProviderToolDefinition, ToolCall, ToolDefinition, ToolExchangeTurn};
 use priest::tool_loop::{run_with_tools, ApprovalDecision, ToolExecutionResult, ToolExecutor};
 use priest::{InMemorySessionStore, PriestEngine, PriestError, Profile};
 
@@ -115,6 +115,23 @@ async fn tool_calls_surface_with_finished_reason() {
     assert_eq!(response.execution.finished_reason.as_deref(), Some("tool_calls"));
     let recorded = calls.lock().unwrap();
     assert_eq!(recorded[0].1.as_ref().unwrap().tools[0].name, "read_file");
+}
+
+#[tokio::test]
+async fn unsupported_provider_tool_returns_provider_error() {
+    let (adapter, calls) = ScriptedAdapter::new(vec![scripted("unused", "stop", None)]);
+    let engine = engine_with(adapter, None);
+    let mut req = PriestRequest::new(config(), "Search the web");
+    req.provider_tools = vec![ProviderToolDefinition::WebSearch];
+
+    let response = engine.run(req).await.unwrap();
+
+    assert!(!response.ok());
+    assert_eq!(response.error.as_ref().unwrap().code, "PROVIDER_ERROR");
+    assert!(response.error.unwrap().message.contains(
+        "Provider tool 'web_search' is not supported"
+    ));
+    assert!(calls.lock().unwrap().is_empty());
 }
 
 #[test]

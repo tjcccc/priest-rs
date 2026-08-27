@@ -3,7 +3,7 @@ use crate::errors::PriestError;
 use crate::schema::config::PriestConfig;
 use crate::schema::request::OutputSpec;
 use crate::schema::reasoning::ReasoningInfo;
-use crate::schema::tools::{ToolCall, ToolChoice, ToolDefinition};
+use crate::schema::tools::{ProviderToolDefinition, ToolCall, ToolChoice, ToolDefinition};
 use async_trait::async_trait;
 use futures::stream::BoxStream;
 
@@ -61,6 +61,7 @@ pub enum AdapterStreamEvent {
 #[derive(Debug, Clone, Default)]
 pub struct AdapterCallOptions {
     pub tools: Vec<ToolDefinition>,
+    pub provider_tools: Vec<ProviderToolDefinition>,
     pub tool_choice: Option<ToolChoice>,
 }
 
@@ -68,6 +69,16 @@ pub struct AdapterCallOptions {
 /// future / stream — adapters must not block detached threads.
 #[async_trait]
 pub trait ProviderAdapter: Send + Sync {
+    /// Whether this adapter can execute the provider-owned tool for the
+    /// selected model/configuration. The default supports none.
+    fn supports_provider_tool(
+        &self,
+        _tool: &ProviderToolDefinition,
+        _config: &PriestConfig,
+    ) -> bool {
+        false
+    }
+
     async fn complete(
         &self,
         messages: &[Message],

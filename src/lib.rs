@@ -32,7 +32,10 @@ pub use schema::{
         ReasoningSummaryMode,
     },
     request::{ImageInput, OutputSpec, PriestRequest, SessionRef},
-    tools::{parse_tool_arguments, ToolCall, ToolChoice, ToolDefinition, ToolExchangeTurn},
+    tools::{
+        parse_tool_arguments, ProviderToolDefinition, ToolCall, ToolChoice,
+        ToolDefinition, ToolExchangeTurn,
+    },
     response::{ExecutionInfo, PriestErrorModel, PriestResponse, SessionInfo, UsageInfo},
 };
 pub use session::{

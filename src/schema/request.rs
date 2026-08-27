@@ -1,5 +1,5 @@
 use super::config::PriestConfig;
-use super::tools::{ToolChoice, ToolDefinition, ToolExchangeTurn};
+use super::tools::{ProviderToolDefinition, ToolChoice, ToolDefinition, ToolExchangeTurn};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -27,6 +27,10 @@ pub struct PriestRequest {
     /// Tools the model may call. The caller executes them; the library transports.
     #[serde(default)]
     pub tools: Vec<ToolDefinition>,
+    /// Tools executed entirely by the model provider. They never enter the
+    /// caller's tool loop or produce ToolCall values.
+    #[serde(default)]
+    pub provider_tools: Vec<ProviderToolDefinition>,
     /// Tool selection behavior. Only meaningful when tools is non-empty.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<ToolChoice>,
@@ -54,6 +58,7 @@ impl PriestRequest {
             output: OutputSpec::default(),
             metadata: HashMap::new(),
             tools: vec![],
+            provider_tools: vec![],
             tool_choice: None,
             tool_exchange: vec![],
         }

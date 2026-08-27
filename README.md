@@ -8,7 +8,7 @@ Rust 2021 · async/await (tokio) · Zero system dependencies
 
 ## Overview
 
-`priest` is a Rust crate that implements the priest protocol spec v2.8.1 natively — no Python server, no FFI. It is designed for Rust services, CLI tools, and any async Rust host that needs to talk to a local or remote AI provider.
+`priest` is a Rust crate that implements the priest protocol spec v2.9.0 natively — no Python server, no FFI. It is designed for Rust services, CLI tools, and any async Rust host that needs to talk to a local or remote AI provider.
 
 The core API is two methods on `PriestEngine`:
 
@@ -23,7 +23,7 @@ The core API is two methods on `PriestEngine`:
 
 ```toml
 [dependencies]
-priest = "2.8.1"
+priest = "2.9.0"
 tokio  = { version = "1", features = ["full"] }
 ```
 
@@ -222,6 +222,25 @@ req.output = OutputSpec {
 
 ---
 
+## Provider-executed tools
+
+Provider-owned tools are separate from caller-executed function tools. OpenAI
+Responses supports hosted web search:
+
+```rust
+use priest::ProviderToolDefinition;
+
+let mut request = PriestRequest::new(config, "What changed today?");
+request.provider_tools = vec![ProviderToolDefinition::WebSearch];
+let response = engine.run(request).await?;
+```
+
+Hosted tools return ordinary final text and never enter `tool_exchange`.
+Unsupported provider/model combinations return `PROVIDER_ERROR` rather than
+silently dropping the requested capability.
+
+---
+
 ## Reasoning
 
 Protocol v2.8 adds provider-neutral reasoning controls and safe, provider-supplied summaries:
@@ -335,10 +354,10 @@ let engine = PriestEngine::new(loader)
 
 ## Spec
 
-`priest` targets priest protocol spec **v2.8.1**. The spec lives in the [`priest`](https://github.com/tjcccc/priest) repository under `spec/`. It defines the canonical context assembly algorithm, session schema, timestamp format, and error codes that all priest SDKs must implement identically.
+`priest` targets priest protocol spec **v2.9.0**. The spec lives in the [`priest`](https://github.com/tjcccc/priest) repository under `spec/`. It defines the canonical context assembly algorithm, session schema, timestamp format, and error codes that all priest SDKs must implement identically.
 
 ```rust
-priest::SPEC_VERSION  // "2.8.1"
+priest::SPEC_VERSION  // "2.9.0"
 ```
 
 ---

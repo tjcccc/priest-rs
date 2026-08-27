@@ -18,6 +18,21 @@ pub struct ToolDefinition {
     pub parameters: Option<Value>,
 }
 
+/// A tool executed entirely by the model provider (spec 2.9.0).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ProviderToolDefinition {
+    WebSearch,
+}
+
+impl ProviderToolDefinition {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::WebSearch => "web_search",
+        }
+    }
+}
+
 /// Tool selection behavior. Only meaningful when tools are provided.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
